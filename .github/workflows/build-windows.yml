@@ -31,6 +31,9 @@ jobs:
           submodules: recursive
           fetch-depth: 1
 
+      - name: Fetch OBS version tag (git describe needs it)
+        run: git -C obs-studio fetch --depth=1 origin "refs/tags/33.0.3:refs/tags/33.0.3"
+
       - name: Restore OBS dependencies (obs-deps, Qt, CEF downloads)
         uses: actions/cache@v4
         with:
