@@ -12,6 +12,9 @@ concurrency:
   group: build-${{ github.ref }}
   cancel-in-progress: true
 
+permissions:
+  contents: write
+
 jobs:
   windows:
     name: Windows x64
@@ -50,6 +53,16 @@ jobs:
             Set-Content -Path $f -Value $c -NoNewline
           }
           Select-String -Path $f -Pattern 'meikou'
+
+      - name: Install MSVC 14.44 ATL (same as OBS CI)
+        run: |
+          $vswhere = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe"
+          $vsPath = & $vswhere -latest -property installationPath
+          $installer = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vs_installer.exe"
+          $argList = "modify --installPath `"$vsPath`" --add Microsoft.VisualStudio.Component.VC.14.44.17.14.ATL --quiet --norestart --nocache"
+          $proc = Start-Process -FilePath $installer -ArgumentList $argList -Wait -PassThru
+          if ($proc.ExitCode -notin 0, 3010) { throw "bad exit code: $($proc.ExitCode)" }
+          if (-not (Test-Path -Path "$vsPath\VC\Tools\MSVC\14.44*\atlmfc\include\atlbase.h")) { throw "ATL header not found" }
 
       - name: Configure
         working-directory: obs-studio
@@ -100,3 +113,11 @@ jobs:
           name: meikou-live-studio-portable
           path: out/*-portable.zip
           retention-days: 7
+
+      - name: Publish pre-release (download page for Meikou)
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $tag = "v$env:MEIKOU_VERSION"
+          $notes = "Meikou Live Studio $env:MEIKOU_VERSION（commit ${{ github.sha }}）。下載 Setup.exe 安裝；zip 為免安裝版。"
+          gh release create $tag (Get-ChildItem out/*-Setup.exe).FullName (Get-ChildItem out/*-portable.zip).FullName --prerelease --title "Meikou Live Studio $env:MEIKOU_VERSION" --notes $notes --target ${{ github.sha }}
