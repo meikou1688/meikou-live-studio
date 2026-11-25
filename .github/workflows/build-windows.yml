@@ -52,14 +52,14 @@ jobs:
         working-directory: obs-studio
         run: >
           cmake --preset windows-x64
-          -DENABLE_FRONTEND=OFF
-          -DENABLE_BROWSER=OFF
-          -DENABLE_SCRIPTING=OFF
-          -DENABLE_WEBSOCKET=OFF
-          -DENABLE_AJA=OFF
-          -DENABLE_VST=OFF
-          -DENABLE_CCACHE=OFF
-          -DOBS_VERSION_OVERRIDE=33.0.3
+          "-DENABLE_FRONTEND=OFF"
+          "-DENABLE_BROWSER=OFF"
+          "-DENABLE_SCRIPTING=OFF"
+          "-DENABLE_WEBSOCKET=OFF"
+          "-DENABLE_AJA=OFF"
+          "-DENABLE_VST=OFF"
+          "-DENABLE_CCACHE=OFF"
+          "-DOBS_VERSION_OVERRIDE=33.0.3"
           "-DMEIKOU_VERSION=$env:MEIKOU_VERSION"
 
       - name: Build
