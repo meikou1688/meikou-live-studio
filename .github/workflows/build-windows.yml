@@ -1,0 +1,98 @@
+name: Build Windows
+
+on:
+  push:
+    branches: [main]
+    paths-ignore:
+      - "docs/**"
+      - "**.md"
+  workflow_dispatch:
+
+concurrency:
+  group: build-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  windows:
+    name: Windows x64
+    runs-on: windows-2025-vs2026
+    timeout-minutes: 180
+    defaults:
+      run:
+        shell: pwsh
+    env:
+      MEIKOU_VERSION: 2.0.0-m0.${{ github.run_number }}
+      MEIKOU_VIVERSION: 2.0.0.${{ github.run_number }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+          fetch-depth: 1
+
+      - name: Restore OBS dependencies (obs-deps, Qt, CEF downloads)
+        uses: actions/cache@v4
+        with:
+          path: obs-studio/.deps
+          key: obs-deps-windows-x64-${{ hashFiles('obs-studio/CMakePresets.json') }}
+
+      - name: Hook Meikou into the OBS build
+        run: |
+          $f = 'obs-studio/CMakeLists.txt'
+          $c = Get-Content $f -Raw
+          if ($c -notmatch 'meikou') {
+            $line = 'add_subdirectory("${CMAKE_CURRENT_SOURCE_DIR}/../meikou" meikou)'
+            $c = $c.Replace('add_subdirectory(frontend)', "add_subdirectory(frontend)`n$line")
+            Set-Content -Path $f -Value $c -NoNewline
+          }
+          Select-String -Path $f -Pattern 'meikou'
+
+      - name: Configure
+        working-directory: obs-studio
+        run: >
+          cmake --preset windows-x64
+          -DENABLE_FRONTEND=OFF
+          -DENABLE_BROWSER=OFF
+          -DENABLE_SCRIPTING=OFF
+          -DENABLE_WEBSOCKET=OFF
+          -DENABLE_AJA=OFF
+          -DENABLE_VST=OFF
+          -DENABLE_CCACHE=OFF
+          "-DMEIKOU_VERSION=$env:MEIKOU_VERSION"
+
+      - name: Build
+        working-directory: obs-studio
+        run: cmake --build build_x64 --config RelWithDebInfo --parallel
+
+      - name: Package (portable zip + installer)
+        run: |
+          $rundir = Resolve-Path 'obs-studio/build_x64/rundir/RelWithDebInfo'
+          Get-ChildItem -Recurse $rundir -Include *.exe | Select-Object -ExpandProperty FullName
+          if (-not (Test-Path "$rundir/bin/64bit/meikou-live-studio.exe")) { throw 'meikou-live-studio.exe not found' }
+          New-Item -ItemType Directory -Force out | Out-Null
+          $stage = Join-Path $env:RUNNER_TEMP 'meikou-portable'
+          robocopy $rundir $stage /E /XF *.pdb *.lib *.exp /NFL /NDL /NJH /NJS
+          if ($LASTEXITCODE -ge 8) { throw "robocopy failed $LASTEXITCODE" }
+          $global:LASTEXITCODE = 0
+          Compress-Archive -Path "$stage/*" -DestinationPath "out/MeikouLiveStudio-$env:MEIKOU_VERSION-portable.zip"
+          choco install nsis -y --no-progress
+          $makensis = 'C:\Program Files (x86)\NSIS\makensis.exe'
+          $outfile = (Join-Path (Resolve-Path out) "MeikouLiveStudio-$env:MEIKOU_VERSION-Setup.exe")
+          & $makensis /V2 "/DVERSION=$env:MEIKOU_VERSION" "/DVIVERSION=$env:MEIKOU_VIVERSION" "/DSRCDIR=$stage" "/DOUTFILE=$outfile" installer/meikou.nsi
+          if ($LASTEXITCODE -ne 0) { throw "makensis failed $LASTEXITCODE" }
+          Get-ChildItem out | Format-Table Name, Length
+
+      - name: Upload installer
+        uses: actions/upload-artifact@v4
+        with:
+          name: meikou-live-studio-setup
+          path: out/*-Setup.exe
+          retention-days: 14
+
+      - name: Upload portable zip
+        uses: actions/upload-artifact@v4
+        with:
+          name: meikou-live-studio-portable
+          path: out/*-portable.zip
+          retention-days: 7
