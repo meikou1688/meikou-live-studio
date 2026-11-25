@@ -59,6 +59,7 @@ jobs:
           -DENABLE_AJA=OFF
           -DENABLE_VST=OFF
           -DENABLE_CCACHE=OFF
+          -DOBS_VERSION_OVERRIDE=33.0.3
           "-DMEIKOU_VERSION=$env:MEIKOU_VERSION"
 
       - name: Build
