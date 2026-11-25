@@ -92,6 +92,12 @@ jobs:
           robocopy $rundir $stage /E /XF *.pdb *.lib *.exp /NFL /NDL /NJH /NJS
           if ($LASTEXITCODE -ge 8) { throw "robocopy failed $LASTEXITCODE" }
           $global:LASTEXITCODE = 0
+          # 一起附上 Visual C++ 執行階段，沒裝過 VC++ 可轉散發套件的電腦也能直接執行
+          $vsPath = & "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe" -latest -property installationPath
+          $crt = Get-ChildItem "$vsPath\VC\Redist\MSVC\*\x64\Microsoft.VC14*.CRT" -Directory | Sort-Object FullName -Descending | Select-Object -First 1
+          if (-not $crt) { throw 'VC runtime not found' }
+          Copy-Item "$($crt.FullName)\*.dll" "$stage\bin\64bit\" -Force
+          Get-ChildItem "$stage\bin\64bit\*.dll" | Where-Object Name -match 'vcruntime|msvcp|concrt' | Format-Table Name
           Compress-Archive -Path "$stage/*" -DestinationPath "out/MeikouLiveStudio-$env:MEIKOU_VERSION-portable.zip"
           choco install nsis -y --no-progress
           $makensis = 'C:\Program Files (x86)\NSIS\makensis.exe'
