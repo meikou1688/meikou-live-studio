@@ -170,10 +170,19 @@ MainWindow::MainWindow(Engine &engine, const QString &projectPath, QWidget *pare
 	auto *tabs = new QTabWidget;
 	tabs->setMinimumWidth(360);
 	mixer_ = new AudioMixer(engine_);
-	tabs->addTab(mixer_, QStringLiteral("混音台"));
-	tabs->addTab(BuildOutputTab(), QStringLiteral("推流／錄影"));
-	tabs->addTab(BuildOverlayTab(), QStringLiteral("疊加素材"));
-	tabs->addTab(BuildSourcesTab(), QStringLiteral("訊號源"));
+	// 每個分頁都能捲動：螢幕較矮時不會被擠扁
+	auto scrollable = [](QWidget *page) {
+		auto *sa = new QScrollArea;
+		sa->setWidget(page);
+		sa->setWidgetResizable(true);
+		sa->setFrameShape(QFrame::NoFrame);
+		sa->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
+		return sa;
+	};
+	tabs->addTab(scrollable(mixer_), QStringLiteral("混音台"));
+	tabs->addTab(scrollable(BuildOutputTab()), QStringLiteral("推流／錄影"));
+	tabs->addTab(scrollable(BuildOverlayTab()), QStringLiteral("疊加素材"));
+	tabs->addTab(scrollable(BuildSourcesTab()), QStringLiteral("訊號源"));
 	bottomSplit_ = new QSplitter(Qt::Horizontal);
 	bottomSplit_->setObjectName(QStringLiteral("bottomSplit"));
 	// 左半放進可捲動區：螢幕較矮時改成捲動，不會把按鈕擠扁
@@ -393,7 +402,7 @@ QWidget *MainWindow::BuildSwitcher()
 	rv->setSpacing(8);
 
 	// 場景列：點一下放到預覽並成為「目前場景」，下面兩列只顯示這個場景的內容
-	auto *sceneGroup = new QGroupBox(QStringLiteral("場景　（點一下放到預覽，F1–F12 快捷鍵；按「送出」上播出，再按一次撤回到預覽）"));
+	auto *sceneGroup = new QGroupBox(QStringLiteral("場景　（點一下放到預覽・F1–F12・送出後再按一次撤回）"));
 	auto *sceneOuter = new QHBoxLayout(sceneGroup);
 	sceneList_ = new QListWidget;
 	sceneList_->setObjectName(QStringLiteral("sceneList"));
@@ -878,8 +887,8 @@ void MainWindow::RebuildRows()
 	}
 	Input *sc = CurrentScene();
 	const QString sceneName = sc ? Q(sc->name) : QStringLiteral("（還沒有場景）");
-	busGroup_->setTitle(QStringLiteral("「%1」的訊號源　（點一下顯示／隱藏，1–9 快捷鍵；右鍵更多）").arg(sceneName));
-	ovlGroup_->setTitle(QStringLiteral("「%1」的疊加 OVL　（點一下顯示／隱藏，Q W E R T Y 快捷鍵；右鍵更多）").arg(sceneName));
+	busGroup_->setTitle(QStringLiteral("「%1」的訊號源　（點一下顯示／隱藏・1–9・右鍵更多）").arg(sceneName));
+	ovlGroup_->setTitle(QStringLiteral("「%1」的疊加 OVL　（點一下顯示／隱藏・QWERTY・右鍵更多）").arg(sceneName));
 
 	int nSrc = 0, nOvl = 0;
 	for (const auto &l : engine_.SceneLayers(sc)) {
