@@ -1,4 +1,5 @@
 #include "Engine.hpp"
+#include "GraphicsRender.hpp"
 #include "Log.hpp"
 #include "MainWindow.hpp"
 
@@ -99,6 +100,7 @@ int main(int argc, char *argv[])
 	QApplication::setApplicationName(QStringLiteral("Meikou Live Studio"));
 	QApplication::setApplicationVersion(QString::fromUtf8(MEIKOU_VERSION));
 	ApplyDarkTheme(app);
+	meikou::LoadBrandFonts(); // 內建思源黑體，疊加圖卡用
 	QApplication::setWindowIcon(QIcon(QStringLiteral(":/meikou/round.png")));
 
 	const QString configDir = QStandardPaths::writableLocation(QStandardPaths::AppDataLocation);

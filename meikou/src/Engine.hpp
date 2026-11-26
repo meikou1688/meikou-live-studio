@@ -1,5 +1,7 @@
 #pragma once
 
+#include "GraphicsRender.hpp"
+
 #include <obs.h>
 #include <graphics/vec2.h>
 #include <util/platform.h>
@@ -48,13 +50,10 @@ enum class OverlayState { Off, Preview, Program };
 
 // 疊加素材（台標、人名條、跑馬燈、時鐘、圖片、文字）。
 // 同一個來源同時放在「預覽疊加場景」與「播出疊加場景」，用顯示／隱藏切換。
-struct Overlay {
+struct Overlay : GraphicSpec {
 	std::string uid;
 	std::string name;
-	std::string kind; // logo / lower / ticker / clock / image / text
-	std::string text1, text2, file;
-	uint32_t color = 0xFFD7263D; // 0xAARRGGBB（介面用）
-	obs_source_t *source = nullptr; // 疊加本體（多數是巢狀場景）
+	obs_source_t *source = nullptr; // 疊加本體：內建圖卡（meikou_graphic）或圖片
 	obs_source_t *t1 = nullptr, *t2 = nullptr, *bar = nullptr;
 	obs_sceneitem_t *pvwItem = nullptr, *pgmItem = nullptr;
 	OverlayState state = OverlayState::Off;
@@ -161,9 +160,7 @@ public:
 	obs_source_t *PreviewOverlayScene() const { return pvwOverlay_ ? obs_scene_get_source(pvwOverlay_) : nullptr; }
 
 	// ---------- 疊加 ----------
-	Overlay *AddOverlay(const std::string &kind, const std::string &name, const std::string &text1,
-			    const std::string &text2, const std::string &file, uint32_t color,
-			    const std::string &uid = std::string());
+	Overlay *AddOverlay(const GraphicSpec &spec, const std::string &name, const std::string &uid = std::string());
 	void UpdateOverlay(Overlay *ov);
 	void RemoveOverlay(const std::string &uid);
 	void ToggleOverlay(const std::string &uid, bool direct);
@@ -199,6 +196,7 @@ private:
 	void ReleaseTarget(Target &t);
 	void ApplyOverlayState(Overlay *ov);
 	void BuildOverlaySource(Overlay *ov);
+	void RefreshGraphic(Overlay *ov);
 	uint32_t NextAudioChannel() const;
 	std::vector<obs_sceneitem_t *> TargetItems(const EditTarget &t);
 	obs_sceneitem_t *AddLayer(Input *scene, Input *src, bool fullscreen);

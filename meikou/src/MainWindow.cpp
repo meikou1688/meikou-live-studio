@@ -3,6 +3,7 @@
 #include "AudioMixer.hpp"
 #include "Display.hpp"
 #include "Log.hpp"
+#include "OverlayDialog.hpp"
 #include "Platform.hpp"
 #include "PropertiesDialog.hpp"
 
@@ -97,7 +98,7 @@ QString KindName(const std::string &kind)
 	if (kind == "logo")
 		return QStringLiteral("台標");
 	if (kind == "lower")
-		return QStringLiteral("人名條");
+		return QStringLiteral("姓名條");
 	if (kind == "ticker")
 		return QStringLiteral("跑馬燈");
 	if (kind == "clock")
@@ -513,7 +514,7 @@ QWidget *MainWindow::BuildOverlayTab()
 	auto *w = new QWidget;
 	auto *v = new QVBoxLayout(w);
 	auto *grid = new QGridLayout;
-	const char *kinds[][2] = {{"台標", "logo"},  {"人名條", "lower"}, {"跑馬燈", "ticker"},
+	const char *kinds[][2] = {{"台標", "logo"},  {"姓名條", "lower"}, {"跑馬燈", "ticker"},
 				  {"時鐘", "clock"}, {"圖片", "image"},   {"文字", "text"}};
 	for (int i = 0; i < 6; i++) {
 		auto *b = new QPushButton(QStringLiteral("＋ ") + QString::fromUtf8(kinds[i][0]));
@@ -523,7 +524,7 @@ QWidget *MainWindow::BuildOverlayTab()
 	}
 	v->addLayout(grid);
 	overlayList_ = new QListWidget;
-	v->addWidget(new QLabel(QStringLiteral("雙擊編輯文字；在預覽畫面拖曳調整位置、滾輪縮放。")));
+	v->addWidget(new QLabel(QStringLiteral("雙擊開啟設計視窗（版型、配色、字級）；在預覽畫面拖曳移動、拖四個角縮放。")));
 	v->addWidget(overlayList_, 1);
 	connect(overlayList_, &QListWidget::itemDoubleClicked, this,
 		[this](QListWidgetItem *it) { EditOverlay(S(it->data(Qt::UserRole).toString())); });
@@ -1105,7 +1106,7 @@ void MainWindow::RebuildOverlayButtons()
 		i++;
 	}
 	if (i == 0) {
-		auto *hint = new QLabel(QStringLiteral("到右邊「疊加素材」新增台標、人名條、跑馬燈或時鐘。"));
+		auto *hint = new QLabel(QStringLiteral("到右邊「疊加素材」新增台標、姓名條、跑馬燈或時鐘。"));
 		hint->setObjectName(QStringLiteral("hint"));
 		ovlLayout_->addWidget(hint);
 	}
@@ -1144,33 +1145,39 @@ void MainWindow::RebuildOverlayList()
 
 void MainWindow::AddOverlayOfKind(const QString &kind)
 {
-	const std::string k = S(kind);
-	std::string name, t1, t2, file;
-	uint32_t color = 0xFFD7263D;
+	GraphicSpec g;
+	g.kind = S(kind);
+	QString name;
 	if (kind == QLatin1String("logo") || kind == QLatin1String("image")) {
-		const QString f = QFileDialog::getOpenFileName(this, QStringLiteral("選擇圖片"), QString(),
-							       QStringLiteral("圖片 (*.png *.jpg *.jpeg *.gif *.webp *.bmp)"));
-		if (f.isEmpty())
+		const QString f = QFileDialog::getOpenFileName(
+			this, kind == QLatin1String("logo") ? QStringLiteral("選擇台標圖片（取消＝做文字台標）") : QStringLiteral("選擇圖片"),
+			QString(), QStringLiteral("圖片 (*.png *.jpg *.jpeg *.gif *.webp *.bmp)"));
+		if (f.isEmpty() && kind == QLatin1String("image"))
 			return;
-		file = S(f);
-		name = (kind == QLatin1String("logo") ? "台標 " : "圖片 ") + S(QFileInfo(f).completeBaseName());
+		g.file = S(f);
+		name = (kind == QLatin1String("logo") ? QStringLiteral("台標 ") : QStringLiteral("圖片 ")) +
+		       (f.isEmpty() ? QStringLiteral("文字") : QFileInfo(f).completeBaseName());
+		g.text1 = "MEIKOU LIVE";
 	} else if (kind == QLatin1String("lower")) {
-		name = "人名條";
-		t1 = "王小明";
-		t2 = "主持人";
+		name = QStringLiteral("姓名條");
+		g.text1 = "王小明";
+		g.text2 = "主持人";
 	} else if (kind == QLatin1String("ticker")) {
-		name = "跑馬燈";
-		t1 = "歡迎收看本節目　＊　記得訂閱、按讚、開啟小鈴鐺　＊　";
-		color = 0xE0101830;
+		name = QStringLiteral("跑馬燈");
+		g.text1 = "歡迎收看本節目　記得訂閱、按讚、開啟小鈴鐺";
 	} else if (kind == QLatin1String("clock")) {
-		name = "時鐘";
-		t1 = "● LIVE";
+		name = QStringLiteral("時鐘");
+		g.text1 = "LIVE";
 	} else {
-		name = "文字";
-		t1 = "Meikou Live Studio";
-		color = 0xFFFFFFFF;
+		name = QStringLiteral("文字");
+		g.text1 = "Meikou Live Studio";
 	}
-	Overlay *ov = engine_.AddOverlay(k, name, t1, t2, file, color);
+	ApplyGraphicDefaults(g);
+
+	OverlayDialog dlg(g, name, this);
+	if (dlg.exec() != QDialog::Accepted)
+		return;
+	Overlay *ov = engine_.AddOverlay(dlg.Spec(), S(dlg.Name()));
 	if (!ov) {
 		QMessageBox::warning(this, windowTitle(), QStringLiteral("無法建立這個疊加素材。"));
 		return;
@@ -1178,8 +1185,6 @@ void MainWindow::AddOverlayOfKind(const QString &kind)
 	RebuildOverlayButtons();
 	RebuildOverlayList();
 	ScheduleSave();
-	if (kind == QLatin1String("lower") || kind == QLatin1String("ticker") || kind == QLatin1String("text"))
-		EditOverlay(ov->uid);
 }
 
 void MainWindow::EditOverlay(const std::string &uid)
@@ -1187,80 +1192,14 @@ void MainWindow::EditOverlay(const std::string &uid)
 	Overlay *ov = engine_.FindOverlay(uid);
 	if (!ov)
 		return;
-
-	QDialog dlg(this);
-	dlg.setWindowTitle(QStringLiteral("編輯%1").arg(KindName(ov->kind)));
-	dlg.setMinimumWidth(460);
-	auto *form = new QFormLayout(&dlg);
-	auto *nameEdit = new QLineEdit(Q(ov->name));
-	form->addRow(QStringLiteral("按鈕名稱"), nameEdit);
-
-	QLineEdit *e1 = nullptr, *e2 = nullptr, *fileEdit = nullptr;
-	uint32_t color = ov->color;
-	auto paint = [](QPushButton *b, uint32_t c) {
-		const QColor qc((c >> 16) & 0xFF, (c >> 8) & 0xFF, c & 0xFF);
-		b->setStyleSheet(QStringLiteral("background:%1; color:%2")
-					 .arg(qc.name(), qc.lightness() > 140 ? QStringLiteral("#000")
-									      : QStringLiteral("#fff")));
-		b->setText(qc.name().toUpper());
-	};
-
-	if (ov->kind == "lower") {
-		e1 = new QLineEdit(Q(ov->text1));
-		e2 = new QLineEdit(Q(ov->text2));
-		form->addRow(QStringLiteral("姓名"), e1);
-		form->addRow(QStringLiteral("職稱／說明"), e2);
-	} else if (ov->kind == "ticker" || ov->kind == "text") {
-		e1 = new QLineEdit(Q(ov->text1));
-		form->addRow(QStringLiteral("文字"), e1);
-	} else if (ov->kind == "clock") {
-		e1 = new QLineEdit(Q(ov->text1));
-		form->addRow(QStringLiteral("時間前的文字"), e1);
-	} else {
-		fileEdit = new QLineEdit(Q(ov->file));
-		auto *browse = new QPushButton(QStringLiteral("瀏覽…"));
-		auto *row = new QHBoxLayout;
-		row->addWidget(fileEdit, 1);
-		row->addWidget(browse);
-		connect(browse, &QPushButton::clicked, &dlg, [&dlg, fileEdit] {
-			const QString f = QFileDialog::getOpenFileName(
-				&dlg, QStringLiteral("選擇圖片"), fileEdit->text(),
-				QStringLiteral("圖片 (*.png *.jpg *.jpeg *.gif *.webp *.bmp)"));
-			if (!f.isEmpty())
-				fileEdit->setText(f);
-		});
-		form->addRow(QStringLiteral("圖片"), row);
-	}
-	if (ov->kind == "lower" || ov->kind == "ticker" || ov->kind == "text") {
-		auto *colorBtn = new QPushButton;
-		paint(colorBtn, color);
-		connect(colorBtn, &QPushButton::clicked, &dlg, [&dlg, &color, colorBtn, paint] {
-			const QColor cur((color >> 16) & 0xFF, (color >> 8) & 0xFF, color & 0xFF, (color >> 24) & 0xFF);
-			const QColor c = QColorDialog::getColor(cur, &dlg, QString(), QColorDialog::ShowAlphaChannel);
-			if (!c.isValid())
-				return;
-			color = ((uint32_t)c.alpha() << 24) | ((uint32_t)c.red() << 16) | ((uint32_t)c.green() << 8) |
-				(uint32_t)c.blue();
-			paint(colorBtn, color);
-		});
-		form->addRow(ov->kind == "text" ? QStringLiteral("文字顏色") : QStringLiteral("底色"), colorBtn);
-	}
-	auto *bb = new QDialogButtonBox(QDialogButtonBox::Ok | QDialogButtonBox::Cancel);
-	connect(bb, &QDialogButtonBox::accepted, &dlg, &QDialog::accept);
-	connect(bb, &QDialogButtonBox::rejected, &dlg, &QDialog::reject);
-	form->addRow(bb);
+	OverlayDialog dlg(*ov, Q(ov->name), this);
 	if (dlg.exec() != QDialog::Accepted)
 		return;
-
-	if (!nameEdit->text().trimmed().isEmpty())
-		ov->name = S(nameEdit->text().trimmed());
-	if (e1)
-		ov->text1 = S(e1->text());
-	if (e2)
-		ov->text2 = S(e2->text());
-	if (fileEdit)
-		ov->file = S(fileEdit->text());
-	ov->color = color;
+	ov = engine_.FindOverlay(uid);
+	if (!ov)
+		return;
+	static_cast<GraphicSpec &>(*ov) = dlg.Spec();
+	ov->name = S(dlg.Name());
 	engine_.UpdateOverlay(ov);
 	RebuildOverlayButtons();
 	RebuildOverlayList();

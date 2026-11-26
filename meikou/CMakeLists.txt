@@ -33,7 +33,21 @@ target_sources(
     src/PropertiesDialog.hpp
     src/MainWindow.cpp
     src/MainWindow.hpp
+    src/GraphicsRender.cpp
+    src/GraphicsRender.hpp
+    src/GraphicSource.cpp
+    src/GraphicSource.hpp
+    src/OverlayDialog.cpp
+    src/OverlayDialog.hpp
     resources/meikou.qrc
+)
+
+# 內建字型：思源黑體 Noto Sans TC（Black／Bold，SIL Open Font License）
+set(
+  MEIKOU_FONTS
+  "${CMAKE_CURRENT_SOURCE_DIR}/resources/fonts/NotoSansTC-Black.ttf"
+  "${CMAKE_CURRENT_SOURCE_DIR}/resources/fonts/NotoSansTC-Bold.ttf"
+  "${CMAKE_CURRENT_SOURCE_DIR}/resources/fonts/OFL.txt"
 )
 
 if(OS_WINDOWS)
@@ -51,6 +65,21 @@ set_target_properties(
 )
 
 set_target_properties_obs(obs-studio PROPERTIES FOLDER meikou OUTPUT_NAME meikou-live-studio)
+
+if(OS_MACOS)
+  target_sources(obs-studio PRIVATE ${MEIKOU_FONTS})
+  set_source_files_properties(${MEIKOU_FONTS} PROPERTIES MACOSX_PACKAGE_LOCATION Resources/fonts)
+else()
+  # 字型放在主程式旁邊的 fonts 資料夾（rundir/<設定>/bin/64bit/fonts）
+  add_custom_command(
+    TARGET obs-studio
+    POST_BUILD
+    COMMAND "${CMAKE_COMMAND}" -E make_directory "${OBS_OUTPUT_DIR}/$<CONFIG>/${OBS_EXECUTABLE_DESTINATION}/fonts"
+    COMMAND "${CMAKE_COMMAND}" -E copy_if_different ${MEIKOU_FONTS} "${OBS_OUTPUT_DIR}/$<CONFIG>/${OBS_EXECUTABLE_DESTINATION}/fonts/"
+    COMMENT "Copy Meikou fonts"
+    VERBATIM
+  )
+endif()
 
 if(OS_MACOS)
   string(TIMESTAMP MEIKOU_YEAR "%Y")

@@ -1,5 +1,6 @@
 #include "Engine.hpp"
 
+#include "GraphicSource.hpp"
 #include "Platform.hpp"
 
 #include <graphics/matrix4.h>
@@ -40,12 +41,6 @@ int PreferenceIndex(const std::string &id)
 }
 
 // 介面用 0xAARRGGBB；libobs 的色彩來源用 0xAABBGGRR
-uint32_t ToAbgr(uint32_t argb)
-{
-	uint32_t a = (argb >> 24) & 0xFF, r = (argb >> 16) & 0xFF, g = (argb >> 8) & 0xFF, b = argb & 0xFF;
-	return (a << 24) | (b << 16) | (g << 8) | r;
-}
-
 std::string StopMessage(int code, const char *lastError)
 {
 	std::string msg;
@@ -111,72 +106,6 @@ void ApplyEncoderSettings(obs_data_t *s, const std::string &id, const EncodeConf
 	}
 }
 
-obs_source_t *CreateText(const std::string &name, const std::string &text, int size, bool bold, uint32_t argb,
-			 int bkOpacity = 0)
-{
-	obs_data_t *s = obs_data_create();
-	obs_data_t *font = obs_data_create();
-#if defined(_WIN32)
-	obs_data_set_string(font, "face", "Microsoft JhengHei");
-#elif defined(__APPLE__)
-	obs_data_set_string(font, "face", "PingFang TC");
-#else
-	obs_data_set_string(font, "face", "Noto Sans CJK TC");
-#endif
-	obs_data_set_int(font, "size", size);
-	obs_data_set_int(font, "flags", bold ? 1 : 0);
-	obs_data_set_string(font, "style", bold ? "Bold" : "Regular");
-	obs_data_set_obj(s, "font", font);
-	obs_data_release(font);
-	obs_data_set_string(s, "text", text.c_str());
-	if (platform::kTextIsGdi) {
-		obs_data_set_int(s, "color", ToAbgr(argb) & 0xFFFFFF);
-		obs_data_set_int(s, "opacity", (int)(((argb >> 24) & 0xFF) * 100 / 255));
-		if (bkOpacity > 0) {
-			obs_data_set_int(s, "bk_color", 0x201810);
-			obs_data_set_int(s, "bk_opacity", bkOpacity);
-		}
-	} else {
-		obs_data_set_int(s, "color1", ToAbgr(argb));
-		obs_data_set_int(s, "color2", ToAbgr(argb));
-	}
-	obs_source_t *src = obs_source_create_private(platform::kText, name.c_str(), s);
-	obs_data_release(s);
-	return src;
-}
-
-void SetText(obs_source_t *src, const std::string &text)
-{
-	if (!src)
-		return;
-	obs_data_t *s = obs_data_create();
-	obs_data_set_string(s, "text", text.c_str());
-	obs_source_update(src, s);
-	obs_data_release(s);
-}
-
-obs_source_t *CreateColor(const std::string &name, uint32_t argb, int w, int h)
-{
-	obs_data_t *s = obs_data_create();
-	obs_data_set_int(s, "color", ToAbgr(argb));
-	obs_data_set_int(s, "width", w);
-	obs_data_set_int(s, "height", h);
-	obs_source_t *src = obs_source_create_private("color_source_v3", name.c_str(), s);
-	obs_data_release(s);
-	return src;
-}
-
-obs_sceneitem_t *AddAt(obs_scene_t *scene, obs_source_t *src, float x, float y)
-{
-	if (!scene || !src)
-		return nullptr;
-	obs_sceneitem_t *item = obs_scene_add(scene, src);
-	struct vec2 pos;
-	vec2_set(&pos, x, y);
-	obs_sceneitem_set_pos(item, &pos);
-	return item;
-}
-
 void FitToCanvas(obs_sceneitem_t *item)
 {
 	struct obs_video_info ovi;
@@ -238,20 +167,6 @@ std::vector<obs_sceneitem_t *> SceneItems(obs_scene_t *scene)
 	return list;
 }
 
-std::string ClockText(const std::string &prefix)
-{
-	std::time_t t = std::time(nullptr);
-	std::tm tmv;
-#if defined(_WIN32)
-	localtime_s(&tmv, &t);
-#else
-	localtime_r(&t, &tmv);
-#endif
-	char buf[64];
-	std::strftime(buf, sizeof(buf), "%H:%M:%S", &tmv);
-	return prefix.empty() ? std::string(buf) : prefix + "  " + buf;
-}
-
 } // namespace
 
 Engine::~Engine()
@@ -276,6 +191,7 @@ bool Engine::Startup(const std::string &configDir, int fpsNum, int fpsDen, std::
 		error = "libobs 啟動失敗";
 		return false;
 	}
+	RegisterGraphicSource();
 	started_ = true;
 	blog(LOG_INFO, "Meikou Live Studio %s, libobs %s", MEIKOU_VERSION, obs_get_version_string());
 
@@ -450,8 +366,8 @@ bool Engine::OutputsActive() const
 void Engine::Tick()
 {
 	for (auto &ov : overlays_) {
-		if (ov->kind == "clock")
-			SetText(ov->t1, ClockText(ov->text1));
+		if (ov->kind == "clock" && ov->state != OverlayState::Off)
+			RefreshGraphic(ov.get());
 	}
 	ReleaseEncodersIfIdle();
 }
@@ -1013,60 +929,33 @@ void Engine::LayerRemove(const EditTarget &t)
 void Engine::BuildOverlaySource(Overlay *ov)
 {
 	const std::string base = ov->kind + ":" + ov->uid;
-	if (ov->kind == "lower") {
-		obs_scene_t *sc = obs_scene_create_private(base.c_str());
-		ov->bar = CreateColor(base + ":bar", ov->color, 980, 150);
-		ov->t1 = CreateText(base + ":name", ov->text1, 64, true, 0xFFFFFFFF);
-		ov->t2 = CreateText(base + ":title", ov->text2, 34, false, 0xE6FFFFFF);
-		AddAt(sc, ov->bar, 0, 0);
-		AddAt(sc, ov->t1, 36, 12);
-		AddAt(sc, ov->t2, 40, 96);
-		ov->source = obs_source_get_ref(obs_scene_get_source(sc));
-		obs_scene_release(sc);
-	} else if (ov->kind == "ticker") {
-		obs_scene_t *sc = obs_scene_create_private(base.c_str());
-		ov->bar = CreateColor(base + ":bar", ov->color, 1920, 72);
-		ov->t1 = CreateText(base + ":text", ov->text1, 40, false, 0xFFFFFFFF);
-		obs_data_t *fs = obs_data_create();
-		obs_data_set_double(fs, "speed_x", 140.0);
-		obs_data_set_bool(fs, "limit_cx", true);
-		obs_data_set_int(fs, "cx", 1920);
-		obs_data_set_bool(fs, "loop", true);
-		obs_source_t *scroll = obs_source_create_private("scroll_filter", (base + ":scroll").c_str(), fs);
-		obs_data_release(fs);
-		if (scroll) {
-			obs_source_filter_add(ov->t1, scroll);
-			obs_source_release(scroll);
-		}
-		AddAt(sc, ov->bar, 0, 0);
-		AddAt(sc, ov->t1, 0, 10);
-		ov->source = obs_source_get_ref(obs_scene_get_source(sc));
-		obs_scene_release(sc);
-	} else if (ov->kind == "clock") {
-		ov->t1 = CreateText(base + ":clock", ClockText(ov->text1), 44, true, 0xFFFFFFFF, 55);
-		ov->source = obs_source_get_ref(ov->t1);
-	} else if (ov->kind == "text") {
-		ov->t1 = CreateText(base + ":text", ov->text1, 56, true, ov->color | 0xFF000000);
-		ov->source = obs_source_get_ref(ov->t1);
-	} else { // logo / image
+	if (ov->kind == "image") {
 		obs_data_t *s = obs_data_create();
 		obs_data_set_string(s, "file", ov->file.c_str());
 		ov->source = obs_source_create_private("image_source", base.c_str(), s);
 		obs_data_release(s);
+		return;
 	}
+	ov->source = obs_source_create_private(kGraphicSourceId, base.c_str(), nullptr);
+	RefreshGraphic(ov);
 }
 
-Overlay *Engine::AddOverlay(const std::string &kind, const std::string &name, const std::string &text1,
-			    const std::string &text2, const std::string &file, uint32_t color, const std::string &uid)
+void Engine::RefreshGraphic(Overlay *ov)
+{
+	if (!ov || !ov->source || ov->kind == "image")
+		return;
+	if (ov->kind == "ticker")
+		GraphicPushTicker(ov->source, RenderTicker(*ov), ov->speed);
+	else
+		GraphicPush(ov->source, RenderGraphic(*ov));
+}
+
+Overlay *Engine::AddOverlay(const GraphicSpec &spec, const std::string &name, const std::string &uid)
 {
 	auto ov = std::make_unique<Overlay>();
+	static_cast<GraphicSpec &>(*ov) = spec;
 	ov->uid = uid.empty() ? NewUid("ov") : uid;
-	ov->kind = kind;
 	ov->name = name;
-	ov->text1 = text1;
-	ov->text2 = text2;
-	ov->file = file;
-	ov->color = color;
 	BuildOverlaySource(ov.get());
 	if (!ov->source)
 		return nullptr;
@@ -1096,27 +985,16 @@ Overlay *Engine::AddOverlay(const std::string &kind, const std::string &name, co
 
 void Engine::UpdateOverlay(Overlay *ov)
 {
-	if (!ov)
+	if (!ov || !ov->source)
 		return;
-	if (ov->kind == "lower") {
-		SetText(ov->t1, ov->text1);
-		SetText(ov->t2, ov->text2);
-	} else if (ov->kind == "ticker" || ov->kind == "text") {
-		SetText(ov->t1, ov->text1);
-	} else if (ov->kind == "clock") {
-		SetText(ov->t1, ClockText(ov->text1));
-	} else if (ov->source) {
+	if (ov->kind == "image") {
 		obs_data_t *s = obs_data_create();
 		obs_data_set_string(s, "file", ov->file.c_str());
 		obs_source_update(ov->source, s);
 		obs_data_release(s);
+		return;
 	}
-	if (ov->bar) {
-		obs_data_t *s = obs_data_create();
-		obs_data_set_int(s, "color", ToAbgr(ov->color));
-		obs_source_update(ov->bar, s);
-		obs_data_release(s);
-	}
+	RefreshGraphic(ov);
 }
 
 void Engine::RemoveOverlay(const std::string &uid)
@@ -1164,6 +1042,8 @@ void Engine::ToggleOverlay(const std::string &uid, bool direct)
 		ov->state = direct ? OverlayState::Off : OverlayState::Preview;
 	else
 		ov->state = OverlayState::Off;
+	if (ov->kind == "clock")
+		RefreshGraphic(ov);
 	ApplyOverlayState(ov);
 	if (ov->state == OverlayState::Preview)
 		SetSelectedOverlay(uid);
@@ -1605,7 +1485,7 @@ void Engine::CreateDefaultAudio()
 std::string Engine::SaveProjectJson() const
 {
 	obs_data_t *root = obs_data_create();
-	obs_data_set_int(root, "version", 1);
+	obs_data_set_int(root, "version", 2); // 2：內建圖卡改為自繪，大小等於圖卡本身
 
 	obs_data_array_t *ins = obs_data_array_create();
 	auto uidOf = [this](obs_source_t *src) {
@@ -1671,7 +1551,17 @@ std::string Engine::SaveProjectJson() const
 		obs_data_set_string(d, "text1", ov->text1.c_str());
 		obs_data_set_string(d, "text2", ov->text2.c_str());
 		obs_data_set_string(d, "file", ov->file.c_str());
+		obs_data_set_string(d, "style", ov->style.c_str());
+		obs_data_set_string(d, "label", ov->label.c_str());
 		obs_data_set_int(d, "color", ov->color);
+		obs_data_set_int(d, "color2", ov->color2);
+		obs_data_set_int(d, "text_color", ov->textColor);
+		obs_data_set_bool(d, "seconds", ov->showSeconds);
+		obs_data_set_bool(d, "h12", ov->h12);
+		obs_data_set_bool(d, "date", ov->showDate);
+		obs_data_set_int(d, "speed", ov->speed);
+		obs_data_set_int(d, "opacity", ov->opacity);
+		obs_data_set_int(d, "size", ov->size);
 		struct vec2 pos, sc;
 		obs_sceneitem_get_pos(ov->pvwItem, &pos);
 		obs_sceneitem_get_scale(ov->pvwItem, &sc);
@@ -1769,11 +1659,34 @@ void Engine::LoadProjectJson(const std::string &json)
 	obs_data_array_t *ovs = obs_data_get_array(root, "overlays");
 	for (size_t i = 0; ovs && i < obs_data_array_count(ovs); i++) {
 		obs_data_t *d = obs_data_array_item(ovs, i);
-		Overlay *ov = AddOverlay(obs_data_get_string(d, "kind"), obs_data_get_string(d, "name"),
-					 obs_data_get_string(d, "text1"), obs_data_get_string(d, "text2"),
-					 obs_data_get_string(d, "file"), (uint32_t)obs_data_get_int(d, "color"),
-					 obs_data_get_string(d, "uid"));
-		if (ov && obs_data_has_user_value(d, "x")) {
+		GraphicSpec g;
+		g.kind = obs_data_get_string(d, "kind");
+		g.text1 = obs_data_get_string(d, "text1");
+		g.text2 = obs_data_get_string(d, "text2");
+		g.file = obs_data_get_string(d, "file");
+		g.style = obs_data_get_string(d, "style");
+		g.label = obs_data_get_string(d, "label");
+		ApplyGraphicDefaults(g); // 舊專案沒有樣式時補上預設
+		if (obs_data_has_user_value(d, "color"))
+			g.color = (uint32_t)obs_data_get_int(d, "color");
+		if (obs_data_has_user_value(d, "color2"))
+			g.color2 = (uint32_t)obs_data_get_int(d, "color2");
+		if (obs_data_has_user_value(d, "text_color"))
+			g.textColor = (uint32_t)obs_data_get_int(d, "text_color");
+		if (obs_data_has_user_value(d, "seconds"))
+			g.showSeconds = obs_data_get_bool(d, "seconds");
+		g.h12 = obs_data_get_bool(d, "h12");
+		g.showDate = obs_data_get_bool(d, "date");
+		if (obs_data_has_user_value(d, "speed"))
+			g.speed = (int)obs_data_get_int(d, "speed");
+		if (obs_data_has_user_value(d, "opacity"))
+			g.opacity = (int)obs_data_get_int(d, "opacity");
+		if (obs_data_has_user_value(d, "size"))
+			g.size = (int)obs_data_get_int(d, "size");
+		Overlay *ov = AddOverlay(g, obs_data_get_string(d, "name"), obs_data_get_string(d, "uid"));
+		// 第 1 版的內建圖卡是 1920×1080 的巢狀場景，舊的縮放比例不能沿用
+		const bool oldLayout = obs_data_get_int(root, "version") < 2 && g.kind != "image";
+		if (ov && !oldLayout && obs_data_has_user_value(d, "x")) {
 			struct vec2 pos, sc;
 			vec2_set(&pos, (float)obs_data_get_double(d, "x"), (float)obs_data_get_double(d, "y"));
 			float s = (float)obs_data_get_double(d, "scale");
