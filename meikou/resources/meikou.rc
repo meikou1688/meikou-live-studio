@@ -19,7 +19,7 @@ BEGIN
       VALUE "FileDescription", "Meikou Live Studio"
       VALUE "FileVersion", "2.0.0"
       VALUE "InternalName", "meikou-live-studio"
-      VALUE "LegalCopyright", "Meikou. Built on libobs (GPL-2.0-or-later)."
+      VALUE "LegalCopyright", "Meikou. GPL-2.0-or-later. Built on libobs."
       VALUE "OriginalFilename", "meikou-live-studio.exe"
       VALUE "ProductName", "Meikou Live Studio"
       VALUE "ProductVersion", "2.0.0"
