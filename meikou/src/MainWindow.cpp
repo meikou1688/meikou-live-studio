@@ -402,11 +402,11 @@ QWidget *MainWindow::BuildSwitcher()
 	sceneList_->setWrapping(true);
 	sceneList_->setResizeMode(QListView::Adjust);
 	sceneList_->setMovement(QListView::Static);
-	sceneList_->setGridSize(QSize(150, 56));
+	sceneList_->setGridSize(QSize(116, 38)); // 精簡尺寸，一列放得下更多場景
 	sceneList_->setUniformItemSizes(true);
 	sceneList_->setSelectionMode(QAbstractItemView::NoSelection);
 	sceneList_->setFocusPolicy(Qt::NoFocus);
-	sceneList_->setFixedHeight(128);
+	sceneList_->setFixedHeight(86); // 兩排
 	sceneList_->setContextMenuPolicy(Qt::CustomContextMenu);
 	connect(sceneList_, &QListWidget::itemClicked, this,
 		[this](QListWidgetItem *it) { SelectScene(S(it->data(Qt::UserRole).toString())); });
@@ -451,7 +451,7 @@ QWidget *MainWindow::BuildSwitcher()
 	auto *busScroll = new QScrollArea;
 	busScroll->setWidgetResizable(true);
 	busScroll->setFrameShape(QFrame::NoFrame);
-	busScroll->setFixedHeight(104); // 影片按鈕下面有播放控制
+	busScroll->setFixedHeight(66); // 影片按鈕下面有播放控制
 	auto *busInner = new QWidget;
 	busLayout_ = new QHBoxLayout(busInner);
 	busLayout_->setContentsMargins(0, 0, 0, 0);
@@ -520,7 +520,7 @@ QWidget *MainWindow::BuildSwitcher()
 	auto *ovlScroll = new QScrollArea;
 	ovlScroll->setWidgetResizable(true);
 	ovlScroll->setFrameShape(QFrame::NoFrame);
-	ovlScroll->setFixedHeight(58);
+	ovlScroll->setFixedHeight(42);
 	auto *ovlInner = new QWidget;
 	ovlLayout_ = new QHBoxLayout(ovlInner);
 	ovlLayout_->setContentsMargins(0, 0, 0, 0);
@@ -891,16 +891,16 @@ void MainWindow::RebuildRows()
 		if (ov && n < (int)std::strlen(kOverlayKeys))
 			key = QString(QLatin1Char(kOverlayKeys[n]));
 		n++;
-		auto *b = new QPushButton(ov ? (key.isEmpty() ? Q(l.name) : QStringLiteral("%1  %2").arg(key, Q(l.name)))
-					     : QStringLiteral("%1\n%2").arg(key, Q(l.name)));
+		auto *b = new QPushButton(key.isEmpty() ? Q(l.name) : QStringLiteral("%1  %2").arg(key, Q(l.name)));
 		b->setObjectName(ov ? QStringLiteral("ovlButton") : QStringLiteral("busButton"));
 		b->setProperty("layer", QVariant::fromValue<qlonglong>(l.id));
-		b->setMinimumSize(ov ? 90 : 128, ov ? 38 : 62);
+		b->setMinimumSize(ov ? 72 : 92, ov ? 30 : 34);
+		b->setMaximumHeight(ov ? 30 : 34);
 		if (!ov)
-			b->setMaximumWidth(220);
+			b->setMaximumWidth(170);
 		b->setFocusPolicy(Qt::NoFocus);
 		b->setContextMenuPolicy(Qt::CustomContextMenu);
-		b->setToolTip(QStringLiteral("點一下在這個場景裡顯示／隱藏"));
+		b->setToolTip(QStringLiteral("%1\n點一下在這個場景裡顯示／隱藏").arg(Q(l.name)));
 		const int64_t id = l.id;
 		const LayerInfo info = l;
 		connect(b, &QPushButton::clicked, this, [this, id] { ToggleLayer(id); });
@@ -922,7 +922,7 @@ void MainWindow::RebuildRows()
 				mb->setObjectName(QStringLiteral("mediaBtn"));
 				mb->setToolTip(tip);
 				mb->setFocusPolicy(Qt::NoFocus);
-				mb->setFixedHeight(24);
+				mb->setFixedHeight(22);
 				connect(mb, &QPushButton::clicked, this, [this, uid, fn] {
 					if (Input *in = engine_.FindInput(uid))
 						fn(in->source);
@@ -943,7 +943,7 @@ void MainWindow::RebuildRows()
 			time->setProperty("media", Q(uid));
 			ctl->addWidget(time, 1);
 			bv->addLayout(ctl);
-			box->setMaximumWidth(260);
+			box->setMaximumWidth(200);
 			busLayout_->addWidget(box);
 			continue;
 		}
@@ -1027,7 +1027,7 @@ void MainWindow::RebuildScenes()
 		const QString key = n <= 12 ? QStringLiteral("F%1  ").arg(n) : QString();
 		auto *it = new QListWidgetItem(key + Q(sc->name));
 		it->setData(Qt::UserRole, Q(sc->uid));
-		it->setSizeHint(QSize(142, 48));
+		it->setSizeHint(QSize(110, 32));
 		it->setTextAlignment(Qt::AlignCenter);
 		it->setToolTip(QStringLiteral("點一下放到預覽並顯示這個場景的內容；右鍵可改名、複製、刪除"));
 		sceneList_->addItem(it);
@@ -1035,7 +1035,7 @@ void MainWindow::RebuildScenes()
 	if (n == 0) {
 		auto *it = new QListWidgetItem(QStringLiteral("按「＋ 新增場景」建立第一個場景"));
 		it->setFlags(Qt::NoItemFlags);
-		it->setSizeHint(QSize(300, 48));
+		it->setSizeHint(QSize(300, 32));
 		sceneList_->addItem(it);
 	}
 	rowSig_.clear();

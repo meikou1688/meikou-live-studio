@@ -47,7 +47,8 @@ QPushButton#flat { background: transparent; border: none; color: #8a90a0; }
 QPushButton#cut { background: #3a3e4c; font-size: 13pt; font-weight: 800; }
 QPushButton#take { background: #d7263d; border-color: #d7263d; color: white; font-size: 13pt; font-weight: 800; }
 QPushButton#take:hover { background: #e83a51; }
-QPushButton#busButton, QPushButton#ovlButton { font-weight: 600; }
+QPushButton#busButton, QPushButton#ovlButton { font-weight: 600; font-size: 13px; padding: 2px 10px; }
+QListWidget#sceneList { font-size: 13px; }
 QPushButton#busButton[state="pvw"], QPushButton#ovlButton[state="pvw"] { background: #1e8e4e; border-color: #2ecc71; color: white; }
 QPushButton#busButton[state="pgm"], QPushButton#ovlButton[state="pgm"] { background: #c0392b; border-color: #ff4d5e; color: white; }
 QPushButton#stream { background: #d7263d; border-color: #d7263d; color: white; font-size: 12pt; font-weight: 700; }
