@@ -2,6 +2,7 @@
 #include "GraphicsRender.hpp"
 #include "Log.hpp"
 #include "MainWindow.hpp"
+#include "SelfTest.hpp"
 
 #include <QApplication>
 #include <QDir>
@@ -102,6 +103,29 @@ int main(int argc, char *argv[])
 	ApplyDarkTheme(app);
 	meikou::LoadBrandFonts(); // 內建思源黑體，疊加圖卡用
 	QApplication::setWindowIcon(QIcon(QStringLiteral(":/meikou/round.png")));
+
+	// 自動巡檢模式：用獨立的設定與暫存資料夾，不碰使用者的專案
+	const QStringList args = QCoreApplication::arguments();
+	if (args.contains(QStringLiteral("--selftest"))) {
+		auto arg = [&](const QString &name, const QString &def) {
+			const int i = args.indexOf(name);
+			return i >= 0 && i + 1 < args.size() ? args.at(i + 1) : def;
+		};
+		QApplication::setApplicationName(QStringLiteral("Meikou Live Studio SelfTest"));
+		const QString dir = QDir(QDir::tempPath()).filePath(QStringLiteral("meikou-selftest"));
+		QDir(dir).removeRecursively();
+		QDir().mkpath(dir);
+#ifndef __APPLE__
+		QDir::setCurrent(QCoreApplication::applicationDirPath());
+#endif
+		meikou::InitLogging((dir + QStringLiteral("/logs")).toUtf8().toStdString());
+		blog(LOG_INFO, "Meikou Live Studio %s self test", MEIKOU_VERSION);
+		const int failed = meikou::RunSelfTest(app, dir, arg(QStringLiteral("--report"), dir + QStringLiteral("/report.json")),
+						       arg(QStringLiteral("--shots"), dir + QStringLiteral("/shots")),
+						       arg(QStringLiteral("--rtmp"), QString()));
+		meikou::ShutdownLogging();
+		return failed;
+	}
 
 	const QString configDir = QStandardPaths::writableLocation(QStandardPaths::AppDataLocation);
 	QDir().mkpath(configDir);

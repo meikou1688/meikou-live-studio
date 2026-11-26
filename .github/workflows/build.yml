@@ -113,6 +113,32 @@ jobs:
           path: out/*
           retention-days: 14
 
+      - name: Self test（自動巡檢）
+        continue-on-error: true
+        run: |
+          $stage = Join-Path $env:RUNNER_TEMP 'meikou-portable'
+          $st = Join-Path $pwd 'selftest'
+          New-Item -ItemType Directory -Force $st | Out-Null
+          $sink = Start-Process python -ArgumentList 'tools/rtmp_sink.py','--port','1935','--report',"$st\rtmp_sink.json",'--seconds','400' -PassThru -NoNewWindow
+          Start-Sleep 2
+          $bin = "$stage\bin\64bit"
+          $p = Start-Process "$bin\meikou-live-studio.exe" -ArgumentList '--selftest','--report',"$st\report.json",'--shots',"$st",'--rtmp','rtmp://127.0.0.1:1935/live' -WorkingDirectory $bin -PassThru
+          if (-not $p.WaitForExit(360000)) { $p.Kill(); Write-Host 'SELFTEST TIMEOUT' }
+          Write-Host "selftest exit code: $($p.ExitCode)"
+          Start-Sleep 1
+          Stop-Process $sink -ErrorAction SilentlyContinue
+          Copy-Item "$env:TEMP\meikou-selftest\logs\*" $st -ErrorAction SilentlyContinue
+          if (Test-Path "$st\report.json") { Get-Content "$st\report.json" -Encoding UTF8 } else { Write-Host 'no report' }
+          if (Test-Path "$st\rtmp_sink.json") { Get-Content "$st\rtmp_sink.json" -Encoding UTF8 }
+
+      - name: Upload self test
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: selftest-windows
+          path: selftest/*
+          retention-days: 14
+
   macos:
     name: macOS (Apple Silicon)
     runs-on: macos-26
@@ -214,25 +240,78 @@ jobs:
           path: out/*
           retention-days: 14
 
+      - name: Self test（自動巡檢）
+        continue-on-error: true
+        run: |
+          mkdir -p selftest
+          python3 tools/rtmp_sink.py --port 1935 --report selftest/rtmp_sink.json --seconds 400 &
+          local sink=$!
+          sleep 2
+          local exe=$(find "stage/Meikou Live Studio.app/Contents/MacOS" -type f -perm +111 | head -n 1)
+          echo "exe: ${exe}"
+          "${exe}" --selftest --report ${PWD}/selftest/report.json --shots ${PWD}/selftest --rtmp rtmp://127.0.0.1:1935/live &
+          local pid=$!
+          local waited=0
+          while kill -0 ${pid} 2>/dev/null && (( waited < 360 )); do sleep 2; (( waited += 2 )); done
+          if kill -0 ${pid} 2>/dev/null; then echo 'SELFTEST TIMEOUT'; kill -9 ${pid}; fi
+          wait ${pid}; echo "selftest exit code: $?"
+          sleep 1
+          kill ${sink} 2>/dev/null || true
+          cp -R "${TMPDIR}meikou-selftest/logs" selftest/ 2>/dev/null || true
+          cat selftest/report.json 2>/dev/null || echo 'no report'
+          cat selftest/rtmp_sink.json 2>/dev/null || true
+
+      - name: Upload self test
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: selftest-macos
+          path: selftest/*
+          retention-days: 14
+
   release:
     name: Publish pre-release
     needs: [windows, macos]
     if: ${{ always() && (needs.windows.result == 'success' || needs.macos.result == 'success') }}
     runs-on: ubuntu-latest
     steps:
+      - uses: actions/checkout@v4
+        with:
+          sparse-checkout: tools
       - uses: actions/download-artifact@v4
         with:
+          pattern: "{windows,macos}"
           path: dist
           merge-multiple: true
+      - uses: actions/download-artifact@v4
+        continue-on-error: true
+        with:
+          pattern: selftest-*
+          path: selftest
       - name: Create release
         env:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
         run: |
           ls -la dist
+          summary=$(python3 - <<'PY'
+          import json, glob, os
+          lines = []
+          for name, label in (("selftest-windows", "Windows"), ("selftest-macos", "macOS")):
+              try:
+                  r = json.load(open(f"selftest/{name}/report.json", encoding="utf-8"))
+                  s = json.load(open(f"selftest/{name}/rtmp_sink.json", encoding="utf-8")) if os.path.exists(f"selftest/{name}/rtmp_sink.json") else {}
+                  rtmp = f"，RTMP 收到 {s.get('video_packets',0)} 個影像封包／{s.get('audio_packets',0)} 個聲音封包" if s else ""
+                  lines.append(f"- {label} 自動巡檢：{r['passed']} 項通過、{r['failed']} 項失敗、{r['warnings']} 項提醒{rtmp}")
+              except Exception as e:
+                  lines.append(f"- {label} 自動巡檢：沒有報告")
+          print("\n".join(lines))
+          PY
+          )
           notes="Meikou Live Studio ${MEIKOU_VERSION}（commit ${GITHUB_SHA::7}）
           - Windows：下載 *-Windows-x64-Setup.exe，點兩下就會自動安裝並開啟。zip 為免安裝版。
           - macOS（Apple Silicon M 系列晶片）：下載 *-macOS-AppleSilicon.pkg，點兩下安裝到「應用程式」。
-            第一次打開若出現「無法驗證開發者」，到「系統設定 → 隱私權與安全性」按「強制打開」。"
+            第一次打開若出現「無法驗證開發者」，到「系統設定 → 隱私權與安全性」按「強制打開」。
+          ${summary}"
           gh release create "v${MEIKOU_VERSION}" dist/* --prerelease \
             --title "Meikou Live Studio ${MEIKOU_VERSION}" --notes "$notes" --target "${GITHUB_SHA}"
