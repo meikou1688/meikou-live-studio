@@ -1072,6 +1072,10 @@ void Engine::ResetOverlayPosition(Overlay *ov)
 		uint32_t w = obs_source_get_width(ov->source);
 		if (w > 300)
 			scale = 300.0f / (float)w;
+	} else if (ov->kind == "lower" && ov->vertical) {
+		align = OBS_ALIGN_RIGHT | OBS_ALIGN_TOP; // 直式姓名條放右上
+		x = 1860;
+		y = 90;
 	} else if (ov->kind == "lower") {
 		align = OBS_ALIGN_LEFT | OBS_ALIGN_BOTTOM;
 		x = 100;
@@ -1563,6 +1567,7 @@ std::string Engine::SaveProjectJson() const
 		obs_data_set_int(d, "opacity", ov->opacity);
 		obs_data_set_int(d, "size", ov->size);
 		obs_data_set_bool(d, "italic", ov->italic);
+		obs_data_set_bool(d, "vertical", ov->vertical);
 		struct vec2 pos, sc;
 		obs_sceneitem_get_pos(ov->pvwItem, &pos);
 		obs_sceneitem_get_scale(ov->pvwItem, &sc);
@@ -1686,6 +1691,7 @@ void Engine::LoadProjectJson(const std::string &json)
 			g.size = (int)obs_data_get_int(d, "size");
 		if (obs_data_has_user_value(d, "italic"))
 			g.italic = obs_data_get_bool(d, "italic");
+		g.vertical = obs_data_get_bool(d, "vertical");
 		Overlay *ov = AddOverlay(g, obs_data_get_string(d, "name"), obs_data_get_string(d, "uid"));
 		// 第 1 版的內建圖卡是 1920×1080 的巢狀場景，舊的縮放比例不能沿用
 		const bool oldLayout = obs_data_get_int(root, "version") < 2 && g.kind != "image";

@@ -1198,9 +1198,12 @@ void MainWindow::EditOverlay(const std::string &uid)
 	ov = engine_.FindOverlay(uid);
 	if (!ov)
 		return;
+	const bool wasVertical = ov->vertical;
 	static_cast<GraphicSpec &>(*ov) = dlg.Spec();
 	ov->name = S(dlg.Name());
 	engine_.UpdateOverlay(ov);
+	if (ov->vertical != wasVertical)
+		engine_.ResetOverlayPosition(ov); // 橫直切換後放回該方向的預設位置
 	RebuildOverlayButtons();
 	RebuildOverlayList();
 	ScheduleSave();

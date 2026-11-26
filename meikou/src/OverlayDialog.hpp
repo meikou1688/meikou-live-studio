@@ -36,6 +36,7 @@ private:
 	QLineEdit *text1_ = nullptr, *text2_ = nullptr, *label_ = nullptr, *file_ = nullptr;
 	QComboBox *style_ = nullptr;
 	QComboBox *slant_ = nullptr;
+	QComboBox *orient_ = nullptr;
 	QPushButton *c1_ = nullptr, *c2_ = nullptr, *tc_ = nullptr;
 	QSpinBox *size_ = nullptr, *opacity_ = nullptr;
 	QSlider *speed_ = nullptr;

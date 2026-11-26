@@ -184,10 +184,249 @@ QString DateText()
 	return d.toString(QStringLiteral("yyyy/MM/dd ")) + QString::fromUtf8(week[d.dayOfWeek()]);
 }
 
+// ------------------------------------------------------------ 直式文字
+
+bool Upright(QChar c)
+{
+	// 中日韓文字與全形符號直立排列；英文、數字整段轉 90 度
+	return c.unicode() >= 0x2E80 || c.isSpace() == false && c.unicode() >= 0x1100 && c.unicode() < 0x11FF;
+}
+
+double VStep(const QFont &f)
+{
+	return f.pixelSize() * 1.04;
+}
+
+double VColumnWidth(const QFont &f)
+{
+	return f.pixelSize() * 1.12;
+}
+
+// 直式文字的路徑：cx 是欄位中線，top 是起點；回傳總高度
+double VText(QPainterPath *path, const QFont &f, double cx, double top, const QString &s)
+{
+	QFontMetricsF fm(f);
+	double y = top;
+	int i = 0;
+	const QString t = s.trimmed();
+	while (i < t.size()) {
+		const QChar c = t.at(i);
+		if (Upright(c)) {
+			if (path) {
+				const double w = fm.horizontalAdvance(c);
+				// 讓字在一個方格內垂直置中
+				const double base = y + (VStep(f) - (fm.ascent() + fm.descent())) / 2 + fm.ascent();
+				path->addText(cx - w / 2, base, f, QString(c));
+			}
+			y += VStep(f);
+			i++;
+			continue;
+		}
+		int j = i;
+		while (j < t.size() && !Upright(t.at(j)))
+			j++;
+		const QString run = t.mid(i, j - i).trimmed();
+		i = j;
+		if (run.isEmpty()) {
+			y += VStep(f) * 0.35;
+			continue;
+		}
+		const double rw = fm.horizontalAdvance(run);
+		if (path) {
+			QPainterPath sub;
+			sub.addText(0, 0, f, run);
+			// 轉 90 度後字身範圍是 x ∈ [-descent, ascent]，平移讓它置中在 cx
+			QTransform center;
+			center.translate(cx - (fm.ascent() - fm.descent()) / 2, y + VStep(f) * 0.08);
+			center.rotate(90);
+			path->addPath(center.map(sub));
+		}
+		y += rw + VStep(f) * 0.16;
+	}
+	return y - top;
+}
+
+void DrawVText(QPainter &p, const QFont &f, double cx, double top, const QString &s, const QColor &fill,
+	       double stroke = 0.0, const QColor &strokeColor = Qt::black)
+{
+	if (s.trimmed().isEmpty())
+		return;
+	QPainterPath path;
+	path.setFillRule(Qt::WindingFill);
+	VText(&path, f, cx, top, s);
+	if (stroke > 0.0)
+		p.strokePath(path, QPen(strokeColor, stroke, Qt::SolidLine, Qt::RoundCap, Qt::RoundJoin));
+	p.fillPath(path, fill);
+}
+
+// ------------------------------------------------------------ 直式姓名條
+
+QImage RenderLowerVertical(const GraphicSpec &g)
+{
+	const double s = Scale(g);
+	const QString name = U(g.text1).trimmed(), title = U(g.text2).trimmed();
+	const QColor c1 = C(g.color), c2 = C(g.color2), tc = C(g.textColor);
+	const double pad = 24 * s;
+	const QFont nf = Font(62 * s, QFont::Black, g.italic), tf = Font(32 * s, QFont::Bold, g.italic);
+	const double nW = VColumnWidth(nf), tW = title.isEmpty() ? 0 : VColumnWidth(tf);
+	const double nH = VText(nullptr, nf, 0, 0, name), tH = title.isEmpty() ? 0 : VText(nullptr, tf, 0, 0, title);
+	const std::string &st = g.style;
+
+	if (st == "clean") {
+		const double inX = 22 * s, inY = 30 * s, gap = 12 * s, topBar = 10 * s;
+		const double w = inX * 2 + nW + (tW > 0 ? gap + tW : 0), h = topBar + inY * 2 + std::max(nH, tH);
+		QImage img = Canvas(pad * 2 + w, pad * 2 + h);
+		QPainter p;
+		Begin(p, img, g);
+		const QRectF r(pad, pad, w, h);
+		QPainterPath card = Rounded(r, 16 * s);
+		SoftShadow(p, card, 14 * s, 6 * s, 0.3);
+		p.fillPath(card, c2);
+		p.save();
+		p.setClipPath(card);
+		p.fillRect(QRectF(r.left(), r.top(), w, topBar), c1);
+		p.restore();
+		const double y = r.top() + topBar + inY;
+		DrawVText(p, nf, r.left() + inX + nW / 2, y, name, tc);
+		if (tW > 0)
+			DrawVText(p, tf, r.left() + inX + nW + gap + tW / 2, y + 6 * s, title, c1.darker(115));
+		return img;
+	}
+
+	if (st == "pill") {
+		const double nColW = nW + 30 * s, tColW = tW + 22 * s;
+		const double nh = nH + nColW, th = tH + tColW;
+		const double offY = nColW * 0.6;
+		const double w = nColW + (tW > 0 ? 10 * s + tColW : 0), h = std::max(nh, tW > 0 ? offY + th : 0.0);
+		QImage img = Canvas(pad * 2 + w, pad * 2 + h);
+		QPainter p;
+		Begin(p, img, g);
+		const QRectF nr(pad, pad, nColW, nh);
+		QPainterPath pill = Rounded(nr, nColW / 2);
+		SoftShadow(p, pill, 12 * s, 5 * s);
+		QLinearGradient lg(nr.topLeft(), nr.bottomLeft());
+		lg.setColorAt(0, c1.lighter(112));
+		lg.setColorAt(1, c1.darker(135));
+		p.fillPath(pill, lg);
+		p.setPen(QPen(A(Qt::white, 0.35), 2 * s));
+		p.drawRoundedRect(nr.adjusted(2 * s, 2 * s, -2 * s, -2 * s), nColW / 2 - 2 * s, nColW / 2 - 2 * s);
+		DrawVText(p, nf, nr.center().x(), nr.top() + nColW / 2, name, tc);
+		if (tW > 0) {
+			const QRectF tr(nr.right() + 10 * s, pad + offY, tColW, th);
+			p.fillPath(Rounded(tr, tColW / 2), c2);
+			DrawVText(p, tf, tr.center().x(), tr.top() + tColW / 2, title, A(tc, 0.92));
+		}
+		return img;
+	}
+
+	if (st == "glass") {
+		const double inX = 20 * s, inY = 30 * s, gap = 14 * s;
+		const double w = inX * 2 + nW + (tW > 0 ? gap + tW : 0), h = inY * 2 + std::max(nH, tH) + 90 * s;
+		QImage img = Canvas(pad * 2 + w, pad * 2 + h);
+		QPainter p;
+		Begin(p, img, g);
+		const QRectF r(pad, pad, w, h);
+		QLinearGradient bg(r.topLeft(), r.bottomLeft());
+		bg.setColorAt(0, A(c2, 0.92));
+		bg.setColorAt(0.7, A(c2, 0.78));
+		bg.setColorAt(1, A(c2, 0.0));
+		p.fillRect(r, bg);
+		p.fillRect(QRectF(r.left(), r.top(), w, 6 * s), c1);
+		QLinearGradient line(r.topLeft(), r.bottomLeft());
+		line.setColorAt(0, c1);
+		line.setColorAt(1, A(c1, 0.0));
+		p.fillRect(QRectF(r.left(), r.top(), 4 * s, h), line);
+		DrawVText(p, nf, r.left() + inX + nW / 2, r.top() + inY, name, tc);
+		if (tW > 0)
+			DrawVText(p, tf, r.left() + inX + nW + gap + tW / 2, r.top() + inY + 6 * s, title, c1.lighter(125));
+		return img;
+	}
+
+	if (st == "outline" || st == "underline") {
+		const double sw = 9 * s, line = 8 * s, gap = 14 * s;
+		const double w = line + gap + nW + (tW > 0 ? gap + tW : 0) + sw * 2, h = std::max(nH, tH + 10 * s) + sw * 2;
+		QImage img = Canvas(pad * 2 + w, pad * 2 + h);
+		QPainter p;
+		Begin(p, img, g);
+		const double x = pad + sw, y = pad + sw;
+		QPainterPath bar = Rounded(QRectF(x, y, line, std::max(nH * 0.7, 80 * s)), line / 2);
+		p.strokePath(bar, QPen(c2, sw * 0.8));
+		p.fillPath(bar, c1);
+		DrawVText(p, nf, x + line + gap + nW / 2, y, name, tc, sw * 2, c2);
+		if (tW > 0)
+			DrawVText(p, tf, x + line + gap + nW + gap + tW / 2, y + 10 * s, title,
+				  st == "underline" ? c1.lighter(125) : A(tc, 0.95), sw * 1.4, c2);
+		return img;
+	}
+
+	if (st == "bracket") {
+		const double inX = 22 * s, inY = 30 * s, gap = 14 * s, len = 30 * s, th = 6 * s;
+		const double w = inX * 2 + nW + (tW > 0 ? gap + tW : 0), h = inY * 2 + std::max(nH, tH);
+		QImage img = Canvas(pad * 2 + w, pad * 2 + h);
+		QPainter p;
+		Begin(p, img, g);
+		const QRectF r(pad, pad, w, h);
+		p.fillRect(r, A(c2, 0.6));
+		p.setPen(Qt::NoPen);
+		p.setBrush(c1);
+		const double L = r.left(), T = r.top(), R = r.right(), B = r.bottom();
+		for (const QRectF &q : {QRectF(L, T, len, th), QRectF(L, T, th, len), QRectF(R - len, T, len, th),
+					QRectF(R - th, T, th, len), QRectF(L, B - th, len, th), QRectF(L, B - len, th, len),
+					QRectF(R - len, B - th, len, th), QRectF(R - th, B - len, th, len)})
+			p.drawRect(q);
+		DrawVText(p, nf, L + inX + nW / 2, T + inY, name, tc);
+		if (tW > 0)
+			DrawVText(p, tf, L + inX + nW + gap + tW / 2, T + inY + 6 * s, title, c1.lighter(120));
+		return img;
+	}
+
+	// 直式色條（新聞台、斜切運動、雙色分割、緞帶共用）：主色長條放姓名，右側錯開一條輔色放職稱
+	const double inX = 18 * s, inY = 28 * s, cut = st == "sport" || st == "ribbon" ? 26 * s : 0.0;
+	const double nColW = nW + inX * 2, tColW = tW + 20 * s;
+	const double nh = nH + inY * 2 + cut, th = tH + 40 * s + cut;
+	const double offY = 34 * s;
+	const double accent = 12 * s;
+	const double w = nColW + (tW > 0 ? tColW : 0), h = std::max(accent + nh, tW > 0 ? offY + th : 0.0);
+	QImage img = Canvas(pad * 2 + w, pad * 2 + h);
+	QPainter p;
+	Begin(p, img, g);
+	const double x = pad, y = pad + accent;
+	auto column = [](double cx, double cy, double cw, double ch, double c) {
+		QPainterPath path;
+		path.moveTo(cx, cy);
+		path.lineTo(cx + cw, cy);
+		path.lineTo(cx + cw, cy + ch - c);
+		path.lineTo(cx, cy + ch);
+		path.closeSubpath();
+		return path;
+	};
+	QPainterPath nameCol = column(x, y, nColW, nh, cut);
+	QPainterPath all = nameCol;
+	if (tW > 0)
+		all = all.united(column(x + nColW, pad + offY, tColW, th, cut));
+	all.addRect(x, pad, nColW, accent);
+	SoftShadow(p, all, 14 * s, 6 * s);
+	if (tW > 0) {
+		p.fillPath(column(x + nColW, pad + offY, tColW, th, cut), st == "split" ? c2.lighter(115) : c2);
+		DrawVText(p, tf, x + nColW + tColW / 2, pad + offY + 20 * s, title, A(tc, 0.92));
+	}
+	QLinearGradient lg(x, y, x + nColW, y);
+	lg.setColorAt(0, c1.lighter(115));
+	lg.setColorAt(1, c1.darker(112));
+	p.fillPath(nameCol, lg);
+	p.fillRect(QRectF(x, pad, nColW, accent - 3 * s), c1.darker(140));
+	if (st == "ribbon")
+		p.fillRect(QRectF(x + 6 * s, y, 2 * s, nh - cut), A(Qt::white, 0.3));
+	DrawVText(p, nf, x + nColW / 2, y + inY, name, tc);
+	return img;
+}
+
 // ------------------------------------------------------------ 姓名條
 
 QImage RenderLower(const GraphicSpec &g)
 {
+	if (g.vertical)
+		return RenderLowerVertical(g);
 	const double s = Scale(g);
 	const QString name = U(g.text1), title = U(g.text2);
 	const QColor c1 = C(g.color), c2 = C(g.color2), tc = C(g.textColor);

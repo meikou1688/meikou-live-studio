@@ -127,6 +127,15 @@ OverlayDialog::OverlayDialog(const GraphicSpec &spec, const QString &name, QWidg
 		form->addRow(QStringLiteral("副標"), text2_);
 	}
 
+	if (k == "lower") {
+		orient_ = new QComboBox;
+		orient_->addItem(QStringLiteral("橫式"));
+		orient_->addItem(QStringLiteral("直式"));
+		orient_->setCurrentIndex(spec_.vertical ? 1 : 0);
+		form->addRow(QStringLiteral("方向"), orient_);
+		connect(orient_, &QComboBox::activated, this, [this](int) { UpdatePreview(); });
+	}
+
 	const auto styles = GraphicStyles(k);
 	if (!styles.empty()) {
 		style_ = new QComboBox;
@@ -278,6 +287,8 @@ void OverlayDialog::Collect()
 		spec_.size = size_->value();
 	if (slant_)
 		spec_.italic = slant_->currentIndex() == 1;
+	if (orient_)
+		spec_.vertical = orient_->currentIndex() == 1;
 	if (opacity_)
 		spec_.opacity = opacity_->value();
 	if (speed_)
