@@ -1024,13 +1024,20 @@ int RunSelfTest(QApplication &app, const QString &configDir, const QString &repo
 				obs_source_media_play_pause(src, false);
 				pump(800);
 				rep.Check(QStringLiteral("繼續播放"), obs_source_media_get_state(src) == OBS_MEDIA_STATE_PLAYING);
-				pump(1500);
+				// 先暫停在影片 70% 的位置，送出後應該從頭開始播（測試影片很短會循環，這樣才看得出來）
+				obs_source_media_play_pause(src, true);
+				pump(300);
+				const int64_t dur = obs_source_media_get_duration(src);
+				obs_source_media_set_time(src, dur * 7 / 10);
+				pump(500);
 				const int64_t before = obs_source_media_get_time(src);
 				engine.Cut();
-				pump(900);
+				pump(400);
 				const int64_t after = obs_source_media_get_time(src);
-				rep.Check(QStringLiteral("送出時影片自動從頭播放"), engine.Program() == mscene && after < before && after < 2000,
-					  QStringLiteral("送出前 %1 ms、送出後 %2 ms").arg(before).arg(after));
+				rep.Check(QStringLiteral("送出時影片自動從頭播放"),
+					  engine.Program() == mscene && obs_source_media_get_state(src) == OBS_MEDIA_STATE_PLAYING &&
+						  after + 200 < before,
+					  QStringLiteral("影片長 %1 ms：送出前停在 %2 ms、送出後 %3 ms").arg(dur).arg(before).arg(after));
 				obs_source_media_stop(src);
 				pump(600);
 				rep.Check(QStringLiteral("停止"), obs_source_media_get_state(src) == OBS_MEDIA_STATE_STOPPED);
