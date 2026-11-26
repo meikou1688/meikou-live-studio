@@ -169,6 +169,30 @@ QIcon MediaIcon(const QString &kind)
 	return QIcon(pm);
 }
 
+// 讓分頁內容跟著面板寬度等比例縮放：說明文字自動換行、按鈕與欄位可以變窄（不會被切掉）
+void MakeShrinkable(QWidget *page)
+{
+	for (QLabel *l : page->findChildren<QLabel *>())
+		if (!l->objectName().startsWith(QStringLiteral("media")))
+			l->setWordWrap(true);
+	for (QPushButton *b : page->findChildren<QPushButton *>()) {
+		if (b->minimumWidth() == b->maximumWidth())
+			continue; // 固定大小的按鈕不動
+		QSizePolicy sp = b->sizePolicy();
+		sp.setHorizontalPolicy(QSizePolicy::Ignored);
+		b->setSizePolicy(sp);
+		b->setMinimumWidth(56);
+	}
+	for (QComboBox *c : page->findChildren<QComboBox *>()) {
+		c->setSizeAdjustPolicy(QComboBox::AdjustToMinimumContentsLengthWithIcon);
+		c->setMinimumContentsLength(6);
+	}
+	for (QAbstractSpinBox *sbx : page->findChildren<QAbstractSpinBox *>())
+		sbx->setMinimumWidth(70);
+	for (QLineEdit *e : page->findChildren<QLineEdit *>())
+		e->setMinimumWidth(60);
+}
+
 void Repolish(QWidget *w)
 {
 	w->style()->unpolish(w);
@@ -208,10 +232,11 @@ MainWindow::MainWindow(Engine &engine, const QString &projectPath, QWidget *pare
 	// 上：預覽／播出；下：左半場景與訊號源、右半功能分頁（各一半，可拖曳分隔線調整）
 	QWidget *monitorsW = BuildSwitcher();
 	auto *tabs = new QTabWidget;
-	tabs->setMinimumWidth(360);
+	tabs->setMinimumWidth(340);
 	mixer_ = new AudioMixer(engine_);
 	// 每個分頁都能捲動：螢幕較矮時不會被擠扁
 	auto scrollable = [](QWidget *page) {
+		MakeShrinkable(page);
 		auto *sa = new QScrollArea;
 		sa->setWidget(page);
 		sa->setWidgetResizable(true);
@@ -643,16 +668,17 @@ QWidget *MainWindow::BuildSourcesTab()
 	v->addWidget(sourceList_, 1);
 	connect(sourceList_, &QListWidget::itemDoubleClicked, this,
 		[this](QListWidgetItem *it) { EditSource(S(it->data(Qt::UserRole).toString())); });
-	auto *row = new QHBoxLayout;
+	auto *row = new QGridLayout; // 兩排兩個：面板變窄時按鈕不會擠到看不見
+	row->setSpacing(6);
 	auto *props = new QPushButton(QStringLiteral("設定"));
 	auto *rename = new QPushButton(QStringLiteral("重新命名"));
 	auto *remove = new QPushButton(QStringLiteral("刪除"));
 	auto *toScene = new QPushButton(QStringLiteral("加入目前場景"));
 	toScene->setObjectName(QStringLiteral("accent"));
-	row->addWidget(toScene);
-	row->addWidget(props);
-	row->addWidget(rename);
-	row->addWidget(remove);
+	row->addWidget(toScene, 0, 0);
+	row->addWidget(props, 0, 1);
+	row->addWidget(rename, 1, 0);
+	row->addWidget(remove, 1, 1);
 	v->addLayout(row);
 	auto current = [this] {
 		auto *it = sourceList_->currentItem();
@@ -1706,6 +1732,7 @@ void MainWindow::RebuildTargets()
 		hint->setWordWrap(true);
 		targetLayout_->addWidget(hint);
 	}
+	MakeShrinkable(targetBox_); // 卡片也跟著面板寬度縮放
 }
 
 void MainWindow::SetTargetExpanded(int row, bool expanded)

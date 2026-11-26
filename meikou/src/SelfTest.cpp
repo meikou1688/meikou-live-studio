@@ -27,6 +27,7 @@
 #include <QProcess>
 #include <QSettings>
 #include <QSplitter>
+#include <QScrollArea>
 #include <QTabWidget>
 #include <QPushButton>
 #include <QStandardPaths>
@@ -911,6 +912,29 @@ int RunSelfTest(QApplication &app, const QString &configDir, const QString &repo
 			window->grab().toImage().save(QDir(shotsDir).filePath(QStringLiteral("ui-maximized.png")));
 			rep.Check(QStringLiteral("最大化時下方左右各半（場景列｜功能分頁）"), half && bs->widget(1)->isVisible(),
 				  sz.size() == 2 ? QStringLiteral("%1 ｜ %2").arg(sz[0]).arg(sz[1]) : QStringLiteral("找不到分隔"));
+			// 把右邊功能區拉到最窄：每個分頁的內容都要縮得進去，不能被切掉
+			QStringList clipped;
+			if (bs) {
+				bs->setSizes({4000, 10});
+				pump(400);
+				auto *tw = bs->widget(1)->findChild<QTabWidget *>() ? bs->widget(1)->findChild<QTabWidget *>()
+										     : qobject_cast<QTabWidget *>(bs->widget(1));
+				for (int i = 0; tw && i < tw->count(); i++) {
+					tw->setCurrentIndex(i);
+					pump(200);
+					auto *sa = qobject_cast<QScrollArea *>(tw->widget(i));
+					if (sa && sa->widget() && sa->widget()->minimumSizeHint().width() > sa->viewport()->width() + 4)
+						clipped << QStringLiteral("%1（需要 %2、只有 %3）")
+								   .arg(tw->tabText(i))
+								   .arg(sa->widget()->minimumSizeHint().width())
+								   .arg(sa->viewport()->width());
+				}
+				window->grab().toImage().save(QDir(shotsDir).filePath(QStringLiteral("ui-narrow-panel.png")));
+				bs->setSizes({800, 800});
+				pump(200);
+			}
+			rep.Check(QStringLiteral("功能區拉到最窄時內容等比例縮小、不被切掉"), bs && clipped.isEmpty(),
+				  clipped.isEmpty() ? QStringLiteral("混音台、推流／錄影、疊加素材、訊號源") : clipped.join(u'、'));
 			window->showNormal();
 			pump(500);
 		}
