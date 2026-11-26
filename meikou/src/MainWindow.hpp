@@ -14,6 +14,7 @@ class QComboBox;
 class QGridLayout;
 class QHBoxLayout;
 class QLabel;
+class QLayout;
 class QLineEdit;
 class QListWidget;
 class QPushButton;
@@ -99,8 +100,8 @@ private:
 
 	Display *pvwDisplay_ = nullptr;
 	Display *pgmDisplay_ = nullptr;
-	QHBoxLayout *busLayout_ = nullptr;
-	QHBoxLayout *ovlLayout_ = nullptr;
+	QLayout *busLayout_ = nullptr; // 自動換行排列
+	QLayout *ovlLayout_ = nullptr;
 	QGroupBox *busGroup_ = nullptr;
 	QWidget *rowsPanel_ = nullptr; // 下方左半：場景／訊號源／疊加
 	QSplitter *mainSplit_ = nullptr;

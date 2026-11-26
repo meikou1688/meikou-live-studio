@@ -1,4 +1,5 @@
 #include "MainWindow.hpp"
+#include "FlowLayout.hpp"
 #include "NetMedia.hpp"
 
 #include "AudioMixer.hpp"
@@ -124,7 +125,7 @@ QPushButton *BigButton(const QString &text, const QString &objName)
 {
 	auto *b = new QPushButton(text);
 	b->setObjectName(objName);
-	b->setMinimumHeight(44);
+	b->setMinimumHeight(36);
 	b->setCursor(Qt::PointingHandCursor);
 	return b;
 }
@@ -376,7 +377,7 @@ QWidget *MainWindow::BuildSwitcher()
 	mid->addStretch(1);
 	auto *midW = new QWidget;
 	midW->setLayout(mid);
-	midW->setFixedWidth(150); // 「送出 AUTO／撤回 AUTO」要放得下
+	midW->setFixedWidth(132); // 「送出 AUTO／撤回 AUTO」要放得下
 
 	auto *pgmBox = new QVBoxLayout;
 	auto *pgmTitle = new QLabel(QStringLiteral("播出 PGM"));
@@ -411,11 +412,11 @@ QWidget *MainWindow::BuildSwitcher()
 	sceneList_->setWrapping(true);
 	sceneList_->setResizeMode(QListView::Adjust);
 	sceneList_->setMovement(QListView::Static);
-	sceneList_->setGridSize(QSize(116, 38)); // 精簡尺寸，一列放得下更多場景
+	sceneList_->setGridSize(QSize(100, 32)); // 精簡尺寸，一排放得下更多場景
 	sceneList_->setUniformItemSizes(true);
 	sceneList_->setSelectionMode(QAbstractItemView::NoSelection);
 	sceneList_->setFocusPolicy(Qt::NoFocus);
-	sceneList_->setFixedHeight(86); // 兩排
+	sceneList_->setFixedHeight(72); // 兩排；更多時可以上下捲動
 	sceneList_->setContextMenuPolicy(Qt::CustomContextMenu);
 	connect(sceneList_, &QListWidget::itemClicked, this,
 		[this](QListWidgetItem *it) { SelectScene(S(it->data(Qt::UserRole).toString())); });
@@ -446,6 +447,7 @@ QWidget *MainWindow::BuildSwitcher()
 	});
 	sceneOuter->addWidget(sceneList_, 1);
 	auto *newScene = new QPushButton(QStringLiteral("＋ 新增場景"));
+	newScene->setFixedSize(112, 26); // 右側工具按鈕統一大小、對齊
 	newScene->setObjectName(QStringLiteral("accent"));
 	connect(newScene, &QPushButton::clicked, this, &MainWindow::NewScene);
 	auto *sceneBtns = new QVBoxLayout;
@@ -460,14 +462,14 @@ QWidget *MainWindow::BuildSwitcher()
 	auto *busScroll = new QScrollArea;
 	busScroll->setWidgetResizable(true);
 	busScroll->setFrameShape(QFrame::NoFrame);
-	busScroll->setFixedHeight(66); // 影片按鈕下面有播放控制
+	busScroll->setFixedHeight(64); // 兩排；更多時可以上下捲動
+	busScroll->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
 	auto *busInner = new QWidget;
-	busLayout_ = new QHBoxLayout(busInner);
-	busLayout_->setContentsMargins(0, 0, 0, 0);
-	busLayout_->setSpacing(8);
+	busLayout_ = new FlowLayout(busInner, 6, 6); // 放不下自動換行
 	busScroll->setWidget(busInner);
 	busOuter->addWidget(busScroll, 1);
 	auto *addSrc = new QPushButton(QStringLiteral("＋ 新增訊號源"));
+	addSrc->setFixedSize(112, 26); // 右側工具按鈕統一大小、對齊
 	addSrc->setObjectName(QStringLiteral("accent"));
 	auto *menu = new QMenu(addSrc);
 	struct Item {
@@ -497,6 +499,7 @@ QWidget *MainWindow::BuildSwitcher()
 	}
 	addSrc->setMenu(menu);
 	auto *addExisting = new QPushButton(QStringLiteral("＋ 加入既有"));
+	addExisting->setFixedSize(112, 26); // 右側工具按鈕統一大小、對齊
 	addExisting->setToolTip(QStringLiteral("把其他場景用過的訊號源加進目前場景"));
 	auto *existMenu = new QMenu(addExisting);
 	connect(existMenu, &QMenu::aboutToShow, this, [this, existMenu] {
@@ -517,9 +520,10 @@ QWidget *MainWindow::BuildSwitcher()
 	});
 	addExisting->setMenu(existMenu);
 	auto *btnCol = new QVBoxLayout;
-	btnCol->setSpacing(6);
+	btnCol->setSpacing(4);
 	btnCol->addWidget(addSrc);
 	btnCol->addWidget(addExisting);
+	btnCol->addStretch(1);
 	busOuter->addLayout(btnCol);
 	rv->addWidget(busGroup_);
 
@@ -529,14 +533,14 @@ QWidget *MainWindow::BuildSwitcher()
 	auto *ovlScroll = new QScrollArea;
 	ovlScroll->setWidgetResizable(true);
 	ovlScroll->setFrameShape(QFrame::NoFrame);
-	ovlScroll->setFixedHeight(42);
+	ovlScroll->setFixedHeight(58); // 兩排
+	ovlScroll->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
 	auto *ovlInner = new QWidget;
-	ovlLayout_ = new QHBoxLayout(ovlInner);
-	ovlLayout_->setContentsMargins(0, 0, 0, 0);
-	ovlLayout_->setSpacing(8);
+	ovlLayout_ = new FlowLayout(ovlInner, 6, 6);
 	ovlScroll->setWidget(ovlInner);
 	ovlOuter->addWidget(ovlScroll, 1);
 	auto *addOvl = new QPushButton(QStringLiteral("＋ 新增疊加"));
+	addOvl->setFixedSize(112, 26); // 右側工具按鈕統一大小、對齊
 	addOvl->setObjectName(QStringLiteral("accent"));
 	auto *ovlMenu = new QMenu(addOvl);
 	const char *kinds[][2] = {{"台標", "logo"}, {"姓名條", "lower"}, {"跑馬燈", "ticker"},
@@ -547,6 +551,7 @@ QWidget *MainWindow::BuildSwitcher()
 	}
 	addOvl->setMenu(ovlMenu);
 	auto *addExistingOvl = new QPushButton(QStringLiteral("＋ 加入既有"));
+	addExistingOvl->setFixedSize(112, 26); // 右側工具按鈕統一大小、對齊
 	addExistingOvl->setToolTip(QStringLiteral("把其他場景用過的疊加素材加進目前場景"));
 	auto *existOvlMenu = new QMenu(addExistingOvl);
 	connect(existOvlMenu, &QMenu::aboutToShow, this, [this, existOvlMenu] {
@@ -566,9 +571,10 @@ QWidget *MainWindow::BuildSwitcher()
 	});
 	addExistingOvl->setMenu(existOvlMenu);
 	auto *ovlCol = new QVBoxLayout;
-	ovlCol->setSpacing(6);
+	ovlCol->setSpacing(4);
 	ovlCol->addWidget(addOvl);
 	ovlCol->addWidget(addExistingOvl);
+	ovlCol->addStretch(1);
 	ovlOuter->addLayout(ovlCol);
 	rv->addWidget(ovlGroup_);
 	rv->addStretch(1);
@@ -879,7 +885,7 @@ void MainWindow::ShowLayerMenu(QWidget *anchor, const QPoint &pos, const LayerIn
 
 void MainWindow::RebuildRows()
 {
-	for (QHBoxLayout *lay : {busLayout_, ovlLayout_}) {
+	for (QLayout *lay : {busLayout_, ovlLayout_}) {
 		while (QLayoutItem *it = lay->takeAt(0)) {
 			delete it->widget();
 			delete it;
@@ -903,10 +909,10 @@ void MainWindow::RebuildRows()
 		auto *b = new QPushButton(key.isEmpty() ? Q(l.name) : QStringLiteral("%1  %2").arg(key, Q(l.name)));
 		b->setObjectName(ov ? QStringLiteral("ovlButton") : QStringLiteral("busButton"));
 		b->setProperty("layer", QVariant::fromValue<qlonglong>(l.id));
-		b->setMinimumSize(ov ? 72 : 92, ov ? 30 : 34);
-		b->setMaximumHeight(ov ? 30 : 34);
+		b->setMinimumSize(ov ? 60 : 72, ov ? 26 : 28);
+		b->setMaximumHeight(ov ? 26 : 28);
 		if (!ov)
-			b->setMaximumWidth(170);
+			b->setMaximumWidth(150);
 		b->setFocusPolicy(Qt::NoFocus);
 		b->setContextMenuPolicy(Qt::CustomContextMenu);
 		b->setToolTip(QStringLiteral("%1\n點一下在這個場景裡顯示／隱藏").arg(Q(l.name)));
@@ -931,7 +937,7 @@ void MainWindow::RebuildRows()
 				mb->setObjectName(QStringLiteral("mediaBtn"));
 				mb->setToolTip(tip);
 				mb->setFocusPolicy(Qt::NoFocus);
-				mb->setFixedHeight(22);
+				mb->setFixedHeight(20);
 				connect(mb, &QPushButton::clicked, this, [this, uid, fn] {
 					if (Input *in = engine_.FindInput(uid))
 						fn(in->source);
@@ -952,7 +958,7 @@ void MainWindow::RebuildRows()
 			time->setProperty("media", Q(uid));
 			ctl->addWidget(time, 1);
 			bv->addLayout(ctl);
-			box->setMaximumWidth(200);
+			box->setMaximumWidth(170);
 			busLayout_->addWidget(box);
 			continue;
 		}
@@ -969,8 +975,6 @@ void MainWindow::RebuildRows()
 		hint->setObjectName(QStringLiteral("hint"));
 		ovlLayout_->addWidget(hint);
 	}
-	busLayout_->addStretch(1);
-	ovlLayout_->addStretch(1);
 	RefreshMediaLabels();
 }
 
@@ -1036,7 +1040,7 @@ void MainWindow::RebuildScenes()
 		const QString key = n <= 12 ? QStringLiteral("F%1  ").arg(n) : QString();
 		auto *it = new QListWidgetItem(key + Q(sc->name));
 		it->setData(Qt::UserRole, Q(sc->uid));
-		it->setSizeHint(QSize(110, 32));
+		it->setSizeHint(QSize(94, 28));
 		it->setTextAlignment(Qt::AlignCenter);
 		it->setToolTip(QStringLiteral("點一下放到預覽並顯示這個場景的內容；右鍵可改名、複製、刪除"));
 		sceneList_->addItem(it);
@@ -1044,7 +1048,7 @@ void MainWindow::RebuildScenes()
 	if (n == 0) {
 		auto *it = new QListWidgetItem(QStringLiteral("按「＋ 新增場景」建立第一個場景"));
 		it->setFlags(Qt::NoItemFlags);
-		it->setSizeHint(QSize(300, 32));
+		it->setSizeHint(QSize(300, 28));
 		sceneList_->addItem(it);
 	}
 	rowSig_.clear();
@@ -1097,7 +1101,7 @@ void MainWindow::RefreshBusState()
 
 	// 按鈕顏色：隱藏＝灰；顯示中＝綠（場景在預覽）或紅（場景播出中）
 	const bool live = cur && pgm == cur;
-	for (QHBoxLayout *lay : {busLayout_, ovlLayout_}) {
+	for (QLayout *lay : {busLayout_, ovlLayout_}) {
 		for (int i = 0; i < lay->count(); i++) {
 			QWidget *w = lay->itemAt(i)->widget();
 			auto *b = qobject_cast<QPushButton *>(w);

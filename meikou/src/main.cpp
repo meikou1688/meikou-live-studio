@@ -35,32 +35,33 @@ QLabel#pvwTitle { color: #2ecc71; font-weight: 700; }
 QLabel#pgmTitle { color: #ff4d5e; font-weight: 700; }
 QFrame#pvwFrame { background: #000; border: 2px solid #2ecc71; border-radius: 4px; }
 QFrame#pgmFrame { background: #000; border: 2px solid #ff4d5e; border-radius: 4px; }
-QGroupBox { border: 1px solid #2a2d38; border-radius: 6px; margin-top: 14px; padding-top: 6px; }
+QGroupBox { border: 1px solid #2a2d38; border-radius: 6px; margin-top: 12px; padding-top: 4px; }
 QGroupBox::title { subcontrol-origin: margin; left: 10px; color: #b8bdc9; }
-QPushButton { background: #2a2d38; border: 1px solid #3a3e4c; border-radius: 6px; padding: 6px 12px; color: #e6e8ec; }
+QPushButton { background: #2a2d38; border: 1px solid #3a3e4c; border-radius: 5px; padding: 4px 10px; color: #e6e8ec; }
 QPushButton:hover { background: #343846; }
 QPushButton:pressed { background: #1f2129; }
 QPushButton:disabled { color: #6a6f7c; }
 QPushButton#accent { background: #00e5c0; border-color: #00e5c0; color: #06121a; font-weight: 700; }
 QPushButton#accent:hover { background: #3ff0d2; }
 QPushButton#flat { background: transparent; border: none; color: #8a90a0; }
-QPushButton#cut { background: #3a3e4c; font-size: 13pt; font-weight: 800; }
-QPushButton#take { background: #d7263d; border-color: #d7263d; color: white; font-size: 13pt; font-weight: 800; }
+QPushButton#cut { background: #3a3e4c; font-size: 12pt; font-weight: 800; }
+QPushButton#take { background: #d7263d; border-color: #d7263d; color: white; font-size: 12pt; font-weight: 800; }
 QPushButton#take:hover { background: #e83a51; }
-QPushButton#busButton, QPushButton#ovlButton { font-weight: 600; font-size: 13px; padding: 2px 10px; }
-QListWidget#sceneList { font-size: 13px; }
+QPushButton#busButton, QPushButton#ovlButton { font-weight: 600; font-size: 12px; padding: 1px 8px; }
+QListWidget#sceneList { font-size: 12px; }
+QPushButton#accent { padding: 2px 8px; }
 QPushButton#busButton[state="pvw"], QPushButton#ovlButton[state="pvw"] { background: #1e8e4e; border-color: #2ecc71; color: white; }
 QPushButton#busButton[state="pgm"], QPushButton#ovlButton[state="pgm"] { background: #c0392b; border-color: #ff4d5e; color: white; }
-QPushButton#stream { background: #d7263d; border-color: #d7263d; color: white; font-size: 12pt; font-weight: 700; }
+QPushButton#stream { background: #d7263d; border-color: #d7263d; color: white; font-size: 11pt; font-weight: 700; }
 QPushButton#stream[state="on"] { background: #3a3e4c; border-color: #ff4d5e; }
-QPushButton#record { background: #3a3e4c; font-size: 12pt; font-weight: 700; }
+QPushButton#record { background: #3a3e4c; font-size: 11pt; font-weight: 700; }
 QPushButton#record[state="on"] { border-color: #ff4d5e; color: #ff4d5e; }
 QTabWidget::pane { border: 1px solid #2a2d38; }
-QTabBar::tab { background: #1c1e26; padding: 8px 14px; border: 1px solid #2a2d38; border-bottom: none; }
+QTabBar::tab { background: #1c1e26; padding: 5px 12px; border: 1px solid #2a2d38; border-bottom: none; }
 QTabBar::tab:selected { background: #2a2d38; color: white; border-bottom: 2px solid #00e5c0; }
 QListWidget, QTableWidget, QLineEdit, QSpinBox, QComboBox { background: #20222b; border: 1px solid #3a3e4c; border-radius: 4px; padding: 3px; }
 QHeaderView::section { background: #1c1e26; border: none; padding: 4px; color: #b8bdc9; }
-QPushButton#mediaBtn, QPushButton#mediaPlay { padding: 0 6px; min-width: 26px; font-size: 13px; background: #262935; }
+QPushButton#mediaBtn, QPushButton#mediaPlay { padding: 0 4px; min-width: 22px; font-size: 11px; background: #262935; }
 QPushButton#mediaBtn:hover, QPushButton#mediaPlay:hover { border-color: #00e5c0; }
 QLabel#mediaTime { color: #8a90a0; font-size: 11px; padding-left: 4px; }
 QFrame#targetCard { background: #1c1e26; border: 1px solid #2a2d38; border-radius: 6px; }

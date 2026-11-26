@@ -41,6 +41,8 @@ target_sources(
     src/OverlayDialog.hpp
     src/SelfTest.cpp
     src/SelfTest.hpp
+    src/FlowLayout.cpp
+    src/FlowLayout.hpp
     src/NetMedia.cpp
     src/NetMedia.hpp
     src/Updater.cpp
