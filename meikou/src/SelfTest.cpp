@@ -1006,6 +1006,17 @@ int RunSelfTest(QApplication &app, const QString &configDir, const QString &repo
 				if (pb->isVisible() && pb->text().startsWith(QStringLiteral("＋")) && pb->width() + 2 < pb->sizeHint().width())
 					cut << QStringLiteral("%1（%2／%3）").arg(pb->text()).arg(pb->width()).arg(pb->sizeHint().width());
 			rep.Check(QStringLiteral("按鈕文字完整顯示（＋ 新增目標等）"), cut.isEmpty(), cut.join(u'、'));
+			QStringList outside;
+			for (QFrame *card : window->findChildren<QFrame *>(QStringLiteral("targetCard"))) {
+				for (QPushButton *pb : card->findChildren<QPushButton *>()) {
+					if (!pb->isVisible())
+						continue;
+					const QRect r(pb->mapTo(card, QPoint(0, 0)), pb->size());
+					if (!card->rect().contains(r))
+						outside << pb->text();
+				}
+			}
+			rep.Check(QStringLiteral("推流目標卡片的按鈕（移除、顯示…）都在卡片內"), outside.isEmpty(), outside.join(u'、'));
 		}
 		rep.Check(QStringLiteral("推流目標：填好的收合、沒填完的展開，欄位夠寬"), cards == 2 && summaries == 1 && wideFields >= 2,
 			  QStringLiteral("%1 張卡片、%2 個收合、%3 個寬欄位").arg(cards).arg(summaries).arg(wideFields));
@@ -1092,6 +1103,16 @@ int RunSelfTest(QApplication &app, const QString &configDir, const QString &repo
 				obs_source_media_stop(src);
 				rep.Check(QStringLiteral("停止"),
 					  waitFor([&] { return obs_source_media_get_state(src) == OBS_MEDIA_STATE_STOPPED; }, 3000));
+				MediaTogglePlay(src); // 停止後按「播放」要從頭播
+				rep.Check(QStringLiteral("停止後按播放會從頭播放"),
+					  waitFor([&] { return obs_source_media_get_state(src) == OBS_MEDIA_STATE_PLAYING; }, 5000));
+				MediaTogglePlay(src); // 再按一次＝暫停
+				rep.Check(QStringLiteral("播放中按播放鍵＝暫停"),
+					  waitFor([&] { return obs_source_media_get_state(src) == OBS_MEDIA_STATE_PAUSED; }, 3000));
+				MediaTogglePlay(src); // 再按一次＝繼續
+				waitFor([&] { return obs_source_media_get_state(src) == OBS_MEDIA_STATE_PLAYING; }, 3000);
+				obs_source_media_stop(src);
+				waitFor([&] { return obs_source_media_get_state(src) == OBS_MEDIA_STATE_STOPPED; }, 3000);
 				obs_source_media_restart(src);
 				rep.Check(QStringLiteral("重播"),
 					  waitFor([&] { return obs_source_media_get_state(src) == OBS_MEDIA_STATE_PLAYING; }, 5000));

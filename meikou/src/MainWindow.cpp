@@ -1029,9 +1029,8 @@ void MainWindow::RebuildRows()
 				ctl->addWidget(mb);
 				return mb;
 			};
-			QPushButton *pp = mk(QStringLiteral("pause"), QStringLiteral("暫停／繼續播放"), [](obs_source_t *s) {
-				obs_source_media_play_pause(s, obs_source_media_get_state(s) == OBS_MEDIA_STATE_PLAYING);
-			});
+			QPushButton *pp = mk(QStringLiteral("pause"), QStringLiteral("暫停／繼續播放"),
+					     [](obs_source_t *s) { MediaTogglePlay(s); });
 			pp->setProperty("media", Q(uid));
 			pp->setObjectName(QStringLiteral("mediaPlay"));
 			mk(QStringLiteral("stop"), QStringLiteral("停止"), [](obs_source_t *s) { obs_source_media_stop(s); });
