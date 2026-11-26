@@ -642,7 +642,7 @@ int RunSelfTest(QApplication &app, const QString &configDir, const QString &repo
 		// 很忙的機器上，寫檔程式要一段時間才回報寫了多少：最多等 12 秒
 		uint64_t bytesWhileRecording = 0;
 		waitFor([&] { return (bytesWhileRecording = engine.QueryStats().recordBytes) > 0; }, 12000);
-		pump(1000);
+		pump(4500); // 錄長一點：這段影片後面還要拿來測播放控制
 		rep.Check(QStringLiteral("錄影中有寫入資料（%1）").arg(label), bytesWhileRecording > 0,
 			  QStringLiteral("%1 KB").arg(bytesWhileRecording / 1024), warnOnly);
 		engine.StopRecording();
