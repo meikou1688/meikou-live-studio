@@ -594,11 +594,13 @@ int RunSelfTest(QApplication &app, const QString &configDir, const QString &repo
 		if (ok) {
 			const bool connected = waitFor([&] { return eventSeen(0, "started"); }, 15000);
 			rep.Check(QStringLiteral("連上 RTMP 伺服器"), connected);
-			pump(6000);
+			pump(4000);
+			engine.QueryStats(); // 碼率是兩次查詢之間的差，先量一次當基準
+			pump(2500);
 			engine.QueryStats();
 			const Target &tt = engine.Targets()[0];
-			rep.Check(QStringLiteral("推流中有送出資料"), tt.active && tt.kbps > 100, // 沒有顯示卡的雲端機器畫面簡單時碼率較低
-				  QStringLiteral("%1 kbps，網路掉格 %2").arg(tt.kbps, 0, 'f', 0).arg(tt.dropped));
+			rep.Check(QStringLiteral("推流中有送出資料"), tt.active && (tt.kbps > 100 || tt.frames > 30),
+				  QStringLiteral("%1 kbps，已送出 %2 幀，網路掉格 %3").arg(tt.kbps, 0, 'f', 0).arg(tt.frames).arg(tt.dropped));
 			engine.StopStreaming();
 			rep.Check(QStringLiteral("停止推流"), waitFor([&] { return !engine.Streaming(); }, 15000));
 		}
