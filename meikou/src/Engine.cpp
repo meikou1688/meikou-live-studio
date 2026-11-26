@@ -553,9 +553,42 @@ std::vector<Input *> Engine::VideoInputs() const
 {
 	std::vector<Input *> list;
 	for (const auto &in : inputs_)
-		if (!in->audioOnly)
+		if (!in->audioOnly && !in->isScene)
 			list.push_back(in.get());
 	return list;
+}
+
+std::vector<Input *> Engine::Scenes() const
+{
+	std::vector<Input *> list;
+	for (const auto &in : inputs_)
+		if (in->isScene)
+			list.push_back(in.get());
+	return list;
+}
+
+Input *Engine::DuplicateScene(const std::string &uid)
+{
+	Input *src = FindInput(uid);
+	if (!src || !src->isScene)
+		return nullptr;
+	Input *copy = CreateScene(src->name + " 複本");
+	if (!copy)
+		return nullptr;
+	for (obs_sceneitem_t *item : SceneItems(src->wrap)) {
+		obs_source_t *s = obs_sceneitem_get_source(item);
+		for (const auto &in : inputs_) {
+			if (in->source != s)
+				continue;
+			const CanvasRect r = ItemRect(item);
+			if (obs_sceneitem_t *n = AddLayer(copy, in.get(), true)) {
+				SetLayerBox(n, r.x0, r.y0, r.x1 - r.x0, r.y1 - r.y0);
+				obs_sceneitem_set_visible(n, obs_sceneitem_visible(item));
+			}
+			break;
+		}
+	}
+	return copy;
 }
 
 bool Engine::HasAudio(const Input *in) const
@@ -587,7 +620,7 @@ std::string Engine::NextSceneName() const
 	for (const auto &in : inputs_)
 		if (in->isScene)
 			n++;
-	return "畫面組合 " + std::to_string(n);
+	return "場景 " + std::to_string(n);
 }
 
 obs_sceneitem_t *Engine::AddLayer(Input *scene, Input *src, bool fullscreen)
@@ -597,8 +630,8 @@ obs_sceneitem_t *Engine::AddLayer(Input *scene, Input *src, bool fullscreen)
 	obs_sceneitem_t *item = obs_scene_add(scene->wrap, src->source);
 	if (!item)
 		return nullptr;
-	if (fullscreen) {
-		SetLayerBox(item, 0, 0, 1920, 1080);
+	if (fullscreen || SceneItems(scene->wrap).size() == 1) {
+		SetLayerBox(item, 0, 0, 1920, 1080); // 空場景的第一層填滿畫面
 	} else {
 		// 子母畫面：右下角 1/3 大小，每多一層往左上錯開，避免完全重疊
 		int count = (int)SceneItems(scene->wrap).size() - 2;
@@ -653,12 +686,22 @@ void Engine::SetPreview(Input *in)
 		obs_source_dec_showing(obs_scene_get_source(old->wrap));
 }
 
-void Engine::Cut()
+// 送出與撤回是同一個動作：預覽和播出互換。
+// 預覽是空的（黑畫面）時按送出＝撤回：播出的畫面回到預覽，播出變黑。
+void Engine::SwapPreviewProgram(bool animated)
 {
-	if (!pvw_)
-		return;
+	if (!pvw_ && !pgm_) {
+		// 只有疊加素材時也要能送出／撤回
+		bool any = false;
+		for (auto &ov : overlays_)
+			any = any || ov->state != OverlayState::Off;
+		if (!any)
+			return;
+	}
 	Input *next = pvw_, *old = pgm_;
-	obs_transition_set(transition_, obs_scene_get_source(next->wrap));
+	obs_source_t *dst = next ? obs_scene_get_source(next->wrap) : obs_scene_get_source(black_);
+	if (!animated || !obs_transition_start(transition_, OBS_TRANSITION_MODE_AUTO, (uint32_t)transitionMs_, dst))
+		obs_transition_set(transition_, dst);
 	pgm_ = next;
 	SetPreview(old);
 	for (auto &ov : overlays_) {
@@ -670,23 +713,14 @@ void Engine::Cut()
 	}
 }
 
+void Engine::Cut()
+{
+	SwapPreviewProgram(false);
+}
+
 void Engine::Auto()
 {
-	if (!pvw_)
-		return;
-	Input *next = pvw_, *old = pgm_;
-	if (!obs_transition_start(transition_, OBS_TRANSITION_MODE_AUTO, (uint32_t)transitionMs_,
-				  obs_scene_get_source(next->wrap)))
-		obs_transition_set(transition_, obs_scene_get_source(next->wrap));
-	pgm_ = next;
-	SetPreview(old);
-	for (auto &ov : overlays_) {
-		if (ov->state == OverlayState::Preview)
-			ov->state = OverlayState::Program;
-		else if (ov->state == OverlayState::Program)
-			ov->state = OverlayState::Preview;
-		ApplyOverlayState(ov.get());
-	}
+	SwapPreviewProgram(true);
 }
 
 std::vector<Choice> Engine::TransitionTypes() const
@@ -760,7 +794,7 @@ void Engine::RenderPreview(float handleSize)
 	gs_effect_t *solid = obs_get_base_effect(OBS_EFFECT_SOLID);
 	gs_eparam_t *color = gs_effect_get_param_by_name(solid, "color");
 	struct vec4 c;
-	vec4_set(&c, 0.0f, 0.9f, 0.75f, 1.0f);
+	vec4_set(&c, 1.0f, 0.79f, 0.25f, 1.0f); // 選取框用黃色，和蒂芬尼藍的畫面邊框區分
 	gs_effect_set_vec4(color, &c);
 	while (gs_effect_loop(solid, "Solid")) {
 		// 外框
@@ -1122,9 +1156,12 @@ void Engine::ToggleOverlay(const std::string &uid, bool direct)
 	Overlay *ov = FindOverlay(uid);
 	if (!ov)
 		return;
-	// 規則：關閉 → 預覽（綠框）；預覽 → 關閉；播出中點一下直接下架。勾「直接送出」時關閉 → 播出
+	// 規則：關閉 → 預覽（綠）；預覽 → 關閉；播出中（紅）點一下撤回到預覽。
+	// 勾「直接送出」時：關閉 → 播出；播出 → 關閉
 	if (ov->state == OverlayState::Off)
 		ov->state = direct ? OverlayState::Program : OverlayState::Preview;
+	else if (ov->state == OverlayState::Program)
+		ov->state = direct ? OverlayState::Off : OverlayState::Preview;
 	else
 		ov->state = OverlayState::Off;
 	ApplyOverlayState(ov);

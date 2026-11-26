@@ -118,7 +118,8 @@ public:
 	void RenameInput(const std::string &uid, const std::string &name);
 	Input *FindInput(const std::string &uid);
 	const std::vector<std::unique_ptr<Input>> &Inputs() const { return inputs_; }
-	std::vector<Input *> VideoInputs() const;
+	std::vector<Input *> VideoInputs() const; // 單一影像訊號源（不含場景）
+	std::vector<Input *> Scenes() const;
 	bool HasAudio(const Input *in) const;
 
 	// ---------- 畫面組合（多個訊號源疊在同一個畫面） ----------
@@ -126,13 +127,15 @@ public:
 	// 把訊號源疊到目前的預覽畫面上；預覽是單一訊號源時，自動建立新的畫面組合
 	Input *ComposeOnPreview(Input *src);
 	std::string NextSceneName() const;
+	Input *DuplicateScene(const std::string &uid);
 
 	// ---------- 切換 ----------
 	void SetPreview(Input *in);
 	Input *Preview() const { return pvw_; }
 	Input *Program() const { return pgm_; }
-	void Cut();
-	void Auto();
+	void Cut();  // 直切送出／撤回
+	void Auto(); // 轉場送出／撤回
+	bool WillWithdraw() const { return !pvw_ && pgm_; } // 下一次按送出是「撤回」
 	bool SetTransitionType(const std::string &typeId);
 	const std::string &TransitionType() const { return transitionType_; }
 	void SetTransitionDuration(int ms) { transitionMs_ = ms; }
@@ -199,6 +202,7 @@ private:
 	uint32_t NextAudioChannel() const;
 	std::vector<obs_sceneitem_t *> TargetItems(const EditTarget &t);
 	obs_sceneitem_t *AddLayer(Input *scene, Input *src, bool fullscreen);
+	void SwapPreviewProgram(bool animated);
 	std::string NewUid(const char *prefix);
 
 	static void OnOutputStart(void *data, calldata_t *cd);

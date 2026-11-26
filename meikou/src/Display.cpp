@@ -2,6 +2,8 @@
 
 #include "Engine.hpp"
 
+#include <graphics/vec4.h>
+
 #include <QMenu>
 #include <QMouseEvent>
 #include <QResizeEvent>
@@ -55,7 +57,7 @@ void Display::CreateDisplay()
 	info.window.id = (uint32_t)winId();
 #endif
 
-	display_ = obs_display_create(&info, 0x0B0C10);
+	display_ = obs_display_create(&info, 0x2A2622); // 畫面外的區域用深灰（0xBBGGRR），和黑色畫面區分
 	if (display_)
 		obs_display_add_draw_callback(display_, Draw, this);
 }
@@ -268,6 +270,28 @@ void Display::Draw(void *param, uint32_t cx, uint32_t cy)
 		obs_render_main_texture();
 	else
 		self->engine_.RenderPreview(10.0f / scale); // 控制點約 10 個實際像素
+
+	// 蒂芬尼藍邊框：標出 1920×1080 畫面邊界，只畫在監看視窗上，不會進到輸出
+	{
+		const float t = 2.0f / scale; // 約 2 個實際像素
+		const float W = (float)ovi.base_width, H = (float)ovi.base_height;
+		gs_effect_t *solid = obs_get_base_effect(OBS_EFFECT_SOLID);
+		gs_eparam_t *color = gs_effect_get_param_by_name(solid, "color");
+		struct vec4 c;
+		vec4_set(&c, 129.0f / 255.0f, 216.0f / 255.0f, 208.0f / 255.0f, 1.0f); // #81D8D0
+		gs_effect_set_vec4(color, &c);
+		while (gs_effect_loop(solid, "Solid")) {
+			const float rects[4][4] = {{0, 0, W, t}, {0, H - t, W, H}, {0, 0, t, H}, {W - t, 0, W, H}};
+			for (const auto &r : rects) {
+				gs_render_start(true);
+				gs_vertex2f(r[0], r[1]);
+				gs_vertex2f(r[2], r[1]);
+				gs_vertex2f(r[0], r[3]);
+				gs_vertex2f(r[2], r[3]);
+				gs_render_stop(GS_TRISTRIP);
+			}
+		}
+	}
 	gs_projection_pop();
 	gs_viewport_pop();
 }
