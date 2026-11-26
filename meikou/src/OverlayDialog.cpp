@@ -123,6 +123,8 @@ OverlayDialog::OverlayDialog(const GraphicSpec &spec, const QString &name, QWidg
 	if (k == "logo") {
 		text1_ = new QLineEdit(Q(spec_.text1));
 		text2_ = new QLineEdit(Q(spec_.text2));
+		text1_->setPlaceholderText(QStringLiteral("選填：圖片旁邊加上文字（例如節目名稱）"));
+		text2_->setPlaceholderText(QStringLiteral("選填：文字下方的小字"));
 		form->addRow(QStringLiteral("台標文字"), text1_);
 		form->addRow(QStringLiteral("副標"), text2_);
 	}

@@ -1265,7 +1265,8 @@ void MainWindow::AddOverlayOfKind(const QString &kind)
 		g.file = S(f);
 		name = (kind == QLatin1String("logo") ? QStringLiteral("台標 ") : QStringLiteral("圖片 ")) +
 		       (f.isEmpty() ? QStringLiteral("文字") : QFileInfo(f).completeBaseName());
-		g.text1 = "MEIKOU LIVE";
+		if (f.isEmpty() || kind == QLatin1String("logo"))
+			g.text1 = f.isEmpty() ? "MEIKOU LIVE" : ""; // 選了圖片：文字留空，要的話再填
 	} else if (kind == QLatin1String("lower")) {
 		name = QStringLiteral("姓名條");
 		g.text1 = "王小明";

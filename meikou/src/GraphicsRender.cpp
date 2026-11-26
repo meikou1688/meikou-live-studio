@@ -933,6 +933,64 @@ QImage FitImage(const QImage &src, double maxW, double maxH)
 	return src.scaled((int)maxW, (int)maxH, Qt::KeepAspectRatio, Qt::SmoothTransformation);
 }
 
+// 文字顏色和底色太接近時自動換成看得清楚的顏色
+QColor Readable(const QColor &text, const QColor &bg)
+{
+	auto lum = [](const QColor &c) { return 0.2126 * c.redF() + 0.7152 * c.greenF() + 0.0722 * c.blueF(); };
+	if (std::fabs(lum(text) - lum(bg)) >= 0.3)
+		return text;
+	return lum(bg) > 0.5 ? QColor(16, 24, 38) : QColor(Qt::white);
+}
+
+// 圖片台標旁邊加上台標文字／副標（有填才加）
+QImage AppendLogoText(const QImage &base, double pad, const GraphicSpec &g, const std::string &style)
+{
+	const QString t = U(g.text1), sub = U(g.text2);
+	if (t.isEmpty() && sub.isEmpty())
+		return base;
+	const double s = Scale(g);
+	const QColor c1 = C(g.color), c2 = C(g.color2), tc = C(g.textColor);
+	const QFont f = Font(40 * s, QFont::Black, g.italic), sf = Font(18 * s, QFont::Bold, g.italic);
+	const double th = t.isEmpty() ? 0 : QFontMetricsF(f).height(), sh = sub.isEmpty() ? 0 : QFontMetricsF(sf).height();
+	const bool bare = style == "plain" || style == "watermark";
+	const double inX = bare ? 0 : 22 * s, inY = bare ? 0 : 10 * s, accent = bare ? 0 : 6 * s;
+	const double pw = std::max(TextW(f, t), TextW(sf, sub)) + inX * 2 + accent, ph = th + sh + inY * 2;
+	const double margin = bare ? 8 * s : pad; // 外圍留給陰影、描邊
+	const double gap = 12 * s;
+	const double x0 = base.width() - (bare ? 0 : pad) + gap;
+	const double W = x0 + pw + margin, H = std::max<double>(base.height(), ph + margin * 2);
+	QImage img = Canvas(W, H);
+	QPainter p;
+	Begin(p, img, g);
+	p.setOpacity(1.0); // 圖片本身已經套過不透明度
+	p.drawImage(QPointF(0, (H - base.height()) / 2), base);
+	p.setOpacity(std::clamp(g.opacity, 5, 100) / 100.0);
+	const QRectF r(x0, (H - ph) / 2, pw, ph);
+	if (bare) {
+		DrawText(p, f, r.left(), r.top(), t, tc, 6 * s, A(Qt::black, 0.6));
+		DrawText(p, sf, r.left() + 2 * s, r.top() + th, sub, A(tc, 0.9), 4 * s, A(Qt::black, 0.6));
+		return img;
+	}
+	QPainterPath box = Rounded(r, 12 * s);
+	SoftShadow(p, box, 10 * s, 4 * s, 0.3);
+	if (style == "rounded") {
+		QLinearGradient lg(r.topLeft(), r.bottomRight());
+		lg.setColorAt(0, c1.lighter(110));
+		lg.setColorAt(1, c1.darker(125));
+		p.fillPath(box, lg);
+	} else {
+		p.fillPath(box, c2);
+	}
+	p.save();
+	p.setClipPath(box);
+	p.fillRect(QRectF(r.left(), r.top(), accent, r.height()), style == "rounded" ? c2 : c1);
+	p.restore();
+	const QColor rc = Readable(tc, style == "rounded" ? c1 : c2);
+	DrawText(p, f, r.left() + accent + inX, r.top() + inY, t, rc);
+	DrawText(p, sf, r.left() + accent + inX + 2 * s, r.top() + inY + th, sub, A(rc, 0.85));
+	return img;
+}
+
 QImage RenderLogo(const GraphicSpec &g)
 {
 	const double s = Scale(g);
@@ -989,13 +1047,19 @@ QImage RenderLogo(const GraphicSpec &g)
 		p.drawImage(QPointF(ir.center().x() - cover.width() / 2.0, ir.center().y() - cover.height() / 2.0), cover);
 		p.restore();
 		p.strokePath(circle, QPen(c1, ring));
-		return img;
+		p.end();
+		return AppendLogoText(img, pad, g, style);
 	}
 
 	if (style == "card") {
 		const QImage fit = FitImage(src, 320 * s, 150 * s);
 		const double inP = 18 * s;
-		const double w = fit.width() + inP * 2, h = fit.height() + inP * 2;
+		const QString t = U(g.text1), sub = U(g.text2);
+		const QFont f = Font(40 * s, QFont::Black, g.italic), sf = Font(18 * s, QFont::Bold, g.italic);
+		const double th = t.isEmpty() ? 0 : QFontMetricsF(f).height(), sh = sub.isEmpty() ? 0 : QFontMetricsF(sf).height();
+		const double tw = std::max(TextW(f, t), TextW(sf, sub));
+		const double gap = tw > 0 ? 18 * s : 0;
+		const double w = fit.width() + gap + tw + inP * 2, h = std::max<double>(fit.height(), th + sh) + inP * 2;
 		QImage img = Canvas(pad * 2 + w, pad * 2 + h);
 		QPainter p;
 		Begin(p, img, g);
@@ -1004,7 +1068,11 @@ QImage RenderLogo(const GraphicSpec &g)
 		SoftShadow(p, box, 10 * s, 4 * s, 0.3);
 		p.fillPath(box, c2);
 		p.fillRect(QRectF(r.left() + 18 * s, r.bottom() - 5 * s, w - 36 * s, 5 * s), c1);
-		p.drawImage(QPointF(r.left() + inP, r.top() + inP), fit);
+		p.drawImage(QPointF(r.left() + inP, r.top() + (h - fit.height()) / 2), fit);
+		const double tx = r.left() + inP + fit.width() + gap, ty = r.top() + (h - th - sh) / 2;
+		const QColor rc = Readable(tc, c2);
+		DrawText(p, f, tx, ty, t, rc);
+		DrawText(p, sf, tx + 2 * s, ty + th, sub, A(rc, 0.85));
 		return img;
 	}
 
@@ -1036,7 +1104,8 @@ QImage RenderLogo(const GraphicSpec &g)
 			DrawText(p, lf, tag.left() + 8 * s, tag.top() + (lh - QFontMetricsF(lf).height()) / 2, QStringLiteral("LIVE"),
 				 Qt::white);
 		}
-		return img;
+		p.end();
+		return AppendLogoText(img, pad, g, style);
 	}
 
 	// 原圖／浮水印
@@ -1045,7 +1114,8 @@ QImage RenderLogo(const GraphicSpec &g)
 	QPainter p;
 	Begin(p, img, g);
 	p.drawImage(0, 0, fit);
-	return img;
+	p.end();
+	return AppendLogoText(img, pad, g, style);
 }
 
 // ------------------------------------------------------------ 文字

@@ -439,6 +439,26 @@ int RunSelfTest(QApplication &app, const QString &configDir, const QString &repo
 	rep.Check(QStringLiteral("所有版型（含直式、斜體）都畫得出來，大小等於圖卡本身"), badStyles == 0,
 		  QStringLiteral("共 %1 種組合%2").arg(styleCount).arg(bad.isEmpty() ? QString() : QStringLiteral("；有問題：") + bad.join(u'、')));
 
+	// 圖片台標加上文字：每種版型的文字都要畫出來（畫面變寬）
+	{
+		QStringList noText;
+		for (const auto &st : GraphicStyles("logo")) {
+			if (st.id == "text")
+				continue;
+			GraphicSpec g;
+			g.kind = "logo";
+			g.file = imgPath.toUtf8().toStdString();
+			ApplyGraphicDefaults(g);
+			g.style = st.id;
+			ApplyStyleColors(g);
+			const int w0 = RenderGraphic(g).width();
+			g.text1 = "MEIKOU LIVE";
+			if (RenderGraphic(g).width() <= w0 + 50)
+				noText << QString::fromUtf8(st.id.c_str());
+		}
+		rep.Check(QStringLiteral("圖片台標可以同時顯示台標文字"), noText.isEmpty(), noText.join(u'、'));
+	}
+
 	// 疊加屬於場景：每個場景有自己的訊號源與疊加
 	rep.Section(QStringLiteral("場景裡的疊加"));
 	GraphicSpec lower;
