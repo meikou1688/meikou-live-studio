@@ -1920,7 +1920,8 @@ void MainWindow::RefreshPageStreams()
 			}
 			obs_data_t *u = obs_data_create();
 			obs_data_set_string(u, "input", S(media.url).c_str());
-			obs_data_set_bool(u, "restart_on_activate", !media.live);
+			obs_data_set_bool(u, "restart_on_activate", false);
+			obs_data_set_bool(u, "meikou_restart_on_send", !media.live);
 			obs_source_update(target->source, u);
 			obs_data_release(u);
 			outputStatus_->setText(QStringLiteral("「%1」已就緒。").arg(Q(target->name)));

@@ -8,6 +8,8 @@
 #include <graphics/vec4.h>
 
 #include <algorithm>
+#include <cstring>
+#include <functional>
 #include <cmath>
 #include <chrono>
 #include <cstring>
@@ -403,6 +405,11 @@ Input *Engine::AddInput(const std::string &typeId, const std::string &name, obs_
 			const std::string &uid)
 {
 	uint32_t flags = obs_get_source_output_flags(typeId.c_str());
+	if (typeId == "ffmpeg_source" && settings && obs_data_get_bool(settings, "restart_on_activate")) {
+		// 舊專案或新加入的影片：改由送出時重播（這樣在預覽就會播放）
+		obs_data_set_bool(settings, "restart_on_activate", false);
+		obs_data_set_bool(settings, "meikou_restart_on_send", true);
+	}
 	obs_source_t *src = obs_source_create(typeId.c_str(), name.c_str(), settings, nullptr);
 	if (!src)
 		return nullptr;
@@ -749,6 +756,7 @@ void Engine::SwapPreviewProgram(bool animated)
 	}
 	Input *next = pvw_, *old = pgm_;
 	obs_source_t *dst = next ? obs_scene_get_source(next->wrap) : obs_scene_get_source(black_);
+	RestartMediaOnSend(next ? next->wrap : nullptr); // 送出時影片從頭播放（直播不重來）
 	if (!animated || !obs_transition_start(transition_, OBS_TRANSITION_MODE_AUTO, (uint32_t)transitionMs_, dst))
 		obs_transition_set(transition_, dst);
 	pgm_ = next;
@@ -760,6 +768,50 @@ void Engine::SwapPreviewProgram(bool animated)
 			ov->state = OverlayState::Preview;
 		ApplyOverlayState(ov.get());
 	}
+}
+
+// 影片在預覽就要播放，所以不用 OBS 的「啟用時重新開始」（它會讓影片直到播出才開始）；
+// 改成送出的那一刻，把這個場景裡「還沒在播出」的影片從頭播放
+void Engine::RestartMediaOnSend(obs_scene_t *scene)
+{
+	if (!scene)
+		return;
+	std::vector<obs_source_t *> restart;
+	struct Ctx {
+		std::vector<obs_source_t *> *out;
+		int depth;
+	};
+	std::function<void(obs_scene_t *, int)> walk = [&](obs_scene_t *sc, int depth) {
+		if (depth > 4)
+			return;
+		Ctx ctx{&restart, depth};
+		std::vector<obs_source_t *> nested;
+		auto collect = [](obs_scene_t *, obs_sceneitem_t *item, void *param) {
+			auto *pair = static_cast<std::pair<Ctx *, std::vector<obs_source_t *> *> *>(param);
+			if (!obs_sceneitem_visible(item))
+				return true;
+			obs_source_t *src = obs_sceneitem_get_source(item);
+			if (obs_scene_from_source(src)) {
+				pair->second->push_back(src);
+				return true;
+			}
+			if (std::strcmp(obs_source_get_id(src), "ffmpeg_source") != 0 || obs_source_active(src))
+				return true;
+			obs_data_t *st = obs_source_get_settings(src);
+			const bool want = obs_data_get_bool(st, "meikou_restart_on_send");
+			obs_data_release(st);
+			if (want)
+				pair->first->out->push_back(src);
+			return true;
+		};
+		std::pair<Ctx *, std::vector<obs_source_t *> *> param{&ctx, &nested};
+		obs_scene_enum_items(sc, collect, &param);
+		for (obs_source_t *n : nested)
+			walk(obs_scene_from_source(n), depth + 1);
+	};
+	walk(scene, 0);
+	for (obs_source_t *src : restart)
+		obs_source_media_restart(src);
 }
 
 void Engine::Cut()

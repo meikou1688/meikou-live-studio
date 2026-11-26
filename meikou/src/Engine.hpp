@@ -224,6 +224,7 @@ private:
 	std::vector<obs_sceneitem_t *> TargetItems(const EditTarget &t);
 	obs_sceneitem_t *AddLayer(Input *scene, Input *src, bool fullscreen);
 	void SwapPreviewProgram(bool animated);
+	void RestartMediaOnSend(obs_scene_t *scene);
 	std::string NewUid(const char *prefix);
 
 	static void OnOutputStart(void *data, calldata_t *cd);
