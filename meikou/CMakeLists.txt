@@ -20,10 +20,15 @@ target_sources(
     src/main.cpp
     src/Log.cpp
     src/Log.hpp
-    src/ObsCore.cpp
-    src/ObsCore.hpp
-    src/PreviewWidget.cpp
-    src/PreviewWidget.hpp
+    src/Platform.hpp
+    src/Engine.cpp
+    src/Engine.hpp
+    src/Display.cpp
+    src/Display.hpp
+    src/AudioMixer.cpp
+    src/AudioMixer.hpp
+    src/PropertiesDialog.cpp
+    src/PropertiesDialog.hpp
     src/MainWindow.cpp
     src/MainWindow.hpp
     resources/meikou.rc
@@ -34,6 +39,6 @@ target_link_libraries(obs-studio PRIVATE OBS::libobs Qt::Widgets)
 
 target_compile_definitions(obs-studio PRIVATE UNICODE _UNICODE NOMINMAX WIN32_LEAN_AND_MEAN MEIKOU_VERSION="${MEIKOU_VERSION}")
 
-set_target_properties(obs-studio PROPERTIES AUTOMOC TRUE AUTOUIC FALSE AUTORCC FALSE)
+set_target_properties(obs-studio PROPERTIES AUTOMOC TRUE AUTOUIC FALSE AUTORCC FALSE COMPILE_WARNING_AS_ERROR OFF)
 
 set_target_properties_obs(obs-studio PROPERTIES FOLDER meikou OUTPUT_NAME meikou-live-studio)

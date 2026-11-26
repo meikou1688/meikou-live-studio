@@ -1,30 +1,55 @@
 #include "MainWindow.hpp"
 
+#include "AudioMixer.hpp"
+#include "Display.hpp"
 #include "Log.hpp"
-#include "PreviewWidget.hpp"
+#include "Platform.hpp"
+#include "PropertiesDialog.hpp"
 
+#include <QAbstractSpinBox>
 #include <QApplication>
 #include <QCheckBox>
 #include <QCloseEvent>
+#include <QColorDialog>
 #include <QComboBox>
+#include <QDateTime>
 #include <QDesktopServices>
+#include <QDialog>
+#include <QDialogButtonBox>
+#include <QDir>
+#include <QFileDialog>
 #include <QFileInfo>
 #include <QFormLayout>
+#include <QFrame>
+#include <QGridLayout>
 #include <QGroupBox>
 #include <QHBoxLayout>
+#include <QHeaderView>
+#include <QInputDialog>
 #include <QLabel>
 #include <QLineEdit>
 #include <QListWidget>
+#include <QMenu>
 #include <QMessageBox>
+#include <QPixmap>
 #include <QPushButton>
+#include <QResizeEvent>
+#include <QSaveFile>
 #include <QScrollArea>
 #include <QSettings>
+#include <QShortcut>
 #include <QSpinBox>
 #include <QSplitter>
-#include <QStatusBar>
+#include <QStandardPaths>
+#include <QStyle>
+#include <QTabWidget>
+#include <QTableWidget>
+#include <QTime>
 #include <QTimer>
 #include <QUrl>
 #include <QVBoxLayout>
+
+#include <util/platform.h>
 
 #include <algorithm>
 
@@ -32,416 +57,1335 @@ namespace meikou {
 
 namespace {
 
-struct Platform {
-	const char *name;
-	const char *server;
-};
-
-const Platform kPlatforms[] = {
-	{"YouTube", "rtmp://a.rtmp.youtube.com/live2"},
-	{"YouTube（RTMPS 加密）", "rtmps://a.rtmps.youtube.com:443/live2"},
-	{"Facebook（RTMPS）", "rtmps://live-api-s.facebook.com:443/rtmp/"},
-	{"Twitch", "rtmp://live.twitch.tv/app"},
-	{"自訂 RTMP／RTMPS", ""},
-};
-
-constexpr int kItemRole = Qt::UserRole + 1;
-
 QString Q(const std::string &s)
 {
 	return QString::fromUtf8(s.c_str());
 }
 
+std::string S(const QString &s)
+{
+	return s.toUtf8().toStdString();
+}
+
+struct PlatformPreset {
+	const char *name;
+	const char *server;
+};
+
+const PlatformPreset kPlatforms[] = {
+	{"YouTube", "rtmp://a.rtmp.youtube.com/live2"},
+	{"YouTube（RTMPS 加密）", "rtmps://a.rtmps.youtube.com:443/live2"},
+	{"Facebook", "rtmps://live-api-s.facebook.com:443/rtmp/"},
+	{"Twitch", "rtmp://live.twitch.tv/app"},
+	{"自訂 RTMP／RTMPS", ""},
+};
+
+struct Fps {
+	const char *name;
+	int num, den;
+};
+
+const Fps kFps[] = {
+	{"24", 24, 1}, {"25", 25, 1}, {"29.97", 30000, 1001}, {"30", 30, 1}, {"60", 60, 1},
+};
+constexpr int kFpsCount = (int)(sizeof(kFps) / sizeof(kFps[0]));
+
+const char *kOverlayKeys = "QWERTYUIOP";
+
+QString KindName(const std::string &kind)
+{
+	if (kind == "logo")
+		return QStringLiteral("台標");
+	if (kind == "lower")
+		return QStringLiteral("人名條");
+	if (kind == "ticker")
+		return QStringLiteral("跑馬燈");
+	if (kind == "clock")
+		return QStringLiteral("時鐘");
+	if (kind == "text")
+		return QStringLiteral("文字");
+	return QStringLiteral("圖片");
+}
+
+QString FmtTime(uint64_t startNs)
+{
+	if (!startNs)
+		return QStringLiteral("00:00:00");
+	const qulonglong secs = (os_gettime_ns() - startNs) / 1000000000ULL;
+	return QStringLiteral("%1:%2:%3")
+		.arg(secs / 3600, 2, 10, QLatin1Char('0'))
+		.arg((secs / 60) % 60, 2, 10, QLatin1Char('0'))
+		.arg(secs % 60, 2, 10, QLatin1Char('0'));
+}
+
+QPushButton *BigButton(const QString &text, const QString &objName)
+{
+	auto *b = new QPushButton(text);
+	b->setObjectName(objName);
+	b->setMinimumHeight(44);
+	b->setCursor(Qt::PointingHandCursor);
+	return b;
+}
+
+void Repolish(QWidget *w)
+{
+	w->style()->unpolish(w);
+	w->style()->polish(w);
+	w->update();
+}
+
+// 正在輸入文字或數字時，快捷鍵不要搶走按鍵（例如在金鑰欄按 Enter 不該切換畫面）
+bool TypingFocus()
+{
+	QWidget *f = QApplication::focusWidget();
+	if (!f)
+		return false;
+	if (qobject_cast<QLineEdit *>(f) || qobject_cast<QAbstractSpinBox *>(f))
+		return true;
+	if (auto *c = qobject_cast<QComboBox *>(f))
+		return c->isEditable();
+	return false;
+}
+
 } // namespace
 
-MainWindow::MainWindow(ObsCore &core, QWidget *parent) : QMainWindow(parent), core_(core)
+MainWindow::MainWindow(Engine &engine, const QString &projectPath, QWidget *parent)
+	: QMainWindow(parent),
+	  engine_(engine),
+	  projectPath_(projectPath)
 {
-	setWindowTitle(QStringLiteral("Meikou Live Studio %1").arg(QStringLiteral(MEIKOU_VERSION)));
-	resize(1440, 860);
+	setWindowTitle(QStringLiteral("Meikou Live Studio ") + QString::fromUtf8(MEIKOU_VERSION));
+	resize(1600, 940);
 
-	auto *splitter = new QSplitter(Qt::Horizontal, this);
-	preview_ = new PreviewWidget(splitter);
-	splitter->addWidget(preview_);
+	auto *central = new QWidget;
+	auto *root = new QVBoxLayout(central);
+	root->setContentsMargins(0, 0, 0, 0);
+	root->setSpacing(0);
+	root->addWidget(BuildTopBar());
 
-	auto *side = new QWidget;
-	auto *sideLayout = new QVBoxLayout(side);
-	sideLayout->addWidget(BuildSourcesPanel());
-	sideLayout->addWidget(BuildAudioPanel());
-	sideLayout->addWidget(BuildStreamPanel());
-	sideLayout->addStretch(1);
+	auto *split = new QSplitter(Qt::Horizontal);
+	split->addWidget(BuildSwitcher());
 
-	auto *scroll = new QScrollArea;
-	scroll->setWidget(side);
-	scroll->setWidgetResizable(true);
-	scroll->setMinimumWidth(380);
-	splitter->addWidget(scroll);
-	splitter->setStretchFactor(0, 1);
-	splitter->setStretchFactor(1, 0);
-	setCentralWidget(splitter);
+	auto *tabs = new QTabWidget;
+	tabs->setMinimumWidth(420);
+	mixer_ = new AudioMixer(engine_);
+	tabs->addTab(mixer_, QStringLiteral("混音台"));
+	tabs->addTab(BuildOutputTab(), QStringLiteral("推流／錄影"));
+	tabs->addTab(BuildOverlayTab(), QStringLiteral("疊加素材"));
+	tabs->addTab(BuildSourcesTab(), QStringLiteral("訊號源"));
+	split->addWidget(tabs);
+	split->setStretchFactor(0, 1);
+	split->setStretchFactor(1, 0);
+	split->setSizes({1150, 450});
+	root->addWidget(split, 1);
+	setCentralWidget(central);
 
-	statsLabel_ = new QLabel;
-	statusBar()->addWidget(statsLabel_, 1);
-	auto *logButton = new QPushButton(QStringLiteral("開啟紀錄資料夾"));
-	connect(logButton, &QPushButton::clicked, this, [] {
-		QFileInfo fi(QString::fromUtf8(CurrentLogPath().c_str()));
-		QDesktopServices::openUrl(QUrl::fromLocalFile(fi.absolutePath()));
-	});
-	statusBar()->addPermanentWidget(logButton);
-
-	core_.onStreamEvent = [this](const std::string &kind, const std::string &message) {
-		QString k = Q(kind), m = Q(message);
-		QMetaObject::invokeMethod(this, [this, k, m] { OnStreamEvent(k, m); }, Qt::QueuedConnection);
+	engine_.onOutputEvent = [this](int index, const std::string &kind, const std::string &message) {
+		const QString k = Q(kind), m = Q(message);
+		QMetaObject::invokeMethod(
+			this, [this, index, k, m] { OnOutputEvent(index, k, m); }, Qt::QueuedConnection);
 	};
+
+	saveTimer_ = new QTimer(this);
+	saveTimer_->setSingleShot(true);
+	saveTimer_->setInterval(1500);
+	connect(saveTimer_, &QTimer::timeout, this, &MainWindow::SaveProject);
 
 	statsTimer_ = new QTimer(this);
 	connect(statsTimer_, &QTimer::timeout, this, &MainWindow::UpdateStats);
 	statsTimer_->start(1000);
 
 	LoadSettings();
-	RefreshCameras();
+	SetupShortcuts();
+	RebuildBus();
+	RebuildSourceList();
+	mixer_->Rebuild();
+	RebuildOverlayButtons();
+	RebuildOverlayList();
+	RebuildTargets();
+	UpdateStats();
 }
 
 MainWindow::~MainWindow()
 {
-	core_.onStreamEvent = nullptr;
+	engine_.onOutputEvent = nullptr;
 }
 
-QWidget *MainWindow::BuildSourcesPanel()
+// ---------------------------------------------------------------- 版面
+
+QWidget *MainWindow::BuildTopBar()
 {
-	auto *box = new QGroupBox(QStringLiteral("訊號源"));
-	auto *v = new QVBoxLayout(box);
+	auto *bar = new QFrame;
+	bar->setObjectName(QStringLiteral("topBar"));
+	auto *h = new QHBoxLayout(bar);
+	h->setContentsMargins(14, 8, 14, 8);
+	h->setSpacing(14);
 
-	auto *camRow = new QHBoxLayout;
-	cameraBox_ = new QComboBox;
-	cameraBox_->setMinimumWidth(180);
-	auto *refresh = new QPushButton(QStringLiteral("重新整理"));
-	auto *addCam = new QPushButton(QStringLiteral("加入"));
-	camRow->addWidget(cameraBox_, 1);
-	camRow->addWidget(refresh);
-	camRow->addWidget(addCam);
-	v->addWidget(new QLabel(QStringLiteral("攝影機／擷取卡／導播機 USB")));
-	v->addLayout(camRow);
+	auto *logo = new QLabel;
+	QPixmap pm(QStringLiteral(":/meikou/logo.png"));
+	if (pm.isNull())
+		pm.load(QCoreApplication::applicationDirPath() + QStringLiteral("/meikou-logo.png"));
+	if (!pm.isNull())
+		logo->setPixmap(pm.scaled(36, 36, Qt::KeepAspectRatio, Qt::SmoothTransformation));
+	h->addWidget(logo);
+	auto *title = new QLabel(QStringLiteral("MEIKOU <span style='color:#a78bfa'>LIVE</span> STUDIO"));
+	title->setObjectName(QStringLiteral("brand"));
+	h->addWidget(title);
+	h->addSpacing(16);
 
-	connect(refresh, &QPushButton::clicked, this, &MainWindow::RefreshCameras);
-	connect(addCam, &QPushButton::clicked, this, [this] {
-		if (cameraBox_->currentIndex() < 0 || cameraBox_->currentData().toString().isEmpty())
-			return;
-		obs_data_t *s = obs_data_create();
-		obs_data_set_string(s, "video_device_id", cameraBox_->currentData().toString().toUtf8().constData());
-		obs_data_set_bool(s, "active", true);
-		obs_data_set_int(s, "res_type", 0); // 使用裝置預設解析度
-		obs_data_set_int(s, "audio_output_mode", 0); // 擷取卡聲音送進混音
-		std::string name = cameraBox_->currentText().toStdString();
-		obs_sceneitem_t *item = core_.AddSource("dshow_input", name, s);
-		obs_data_release(s);
-		AddItem(item, cameraBox_->currentText());
+	liveLabel_ = new QLabel(QStringLiteral("● 未直播"));
+	liveLabel_->setObjectName(QStringLiteral("pill"));
+	recLabel_ = new QLabel(QStringLiteral("● 未錄影"));
+	recLabel_->setObjectName(QStringLiteral("pill"));
+	h->addWidget(liveLabel_);
+	h->addWidget(recLabel_);
+	h->addStretch(1);
+	statsLabel_ = new QLabel;
+	statsLabel_->setObjectName(QStringLiteral("stats"));
+	h->addWidget(statsLabel_);
+	auto *logBtn = new QPushButton(QStringLiteral("紀錄檔"));
+	logBtn->setObjectName(QStringLiteral("flat"));
+	connect(logBtn, &QPushButton::clicked, this, [] {
+		QFileInfo fi(Q(CurrentLogPath()));
+		QDesktopServices::openUrl(QUrl::fromLocalFile(fi.absolutePath()));
 	});
-
-	auto *addScreen = new QPushButton(QStringLiteral("加入螢幕擷取（主螢幕）"));
-	v->addWidget(addScreen);
-	connect(addScreen, &QPushButton::clicked, this, [this] {
-		auto monitors = core_.ListProperty("monitor_capture", "monitor_id");
-		obs_data_t *s = obs_data_create();
-		if (!monitors.empty())
-			obs_data_set_string(s, "monitor_id", monitors.front().id.c_str());
-		obs_data_set_bool(s, "capture_cursor", true);
-		obs_sceneitem_t *item = core_.AddSource("monitor_capture", "螢幕擷取", s);
-		obs_data_release(s);
-		AddItem(item, QStringLiteral("螢幕擷取"));
-	});
-
-	auto *urlRow = new QHBoxLayout;
-	urlEdit_ = new QLineEdit;
-	urlEdit_->setPlaceholderText(QStringLiteral("rtmp:// srt:// rtsp:// https://…m3u8 或影片網址"));
-	auto *addUrl = new QPushButton(QStringLiteral("加入"));
-	urlRow->addWidget(urlEdit_, 1);
-	urlRow->addWidget(addUrl);
-	v->addWidget(new QLabel(QStringLiteral("網路影片（RTMP／SRT／RTSP／HLS）")));
-	v->addLayout(urlRow);
-	connect(addUrl, &QPushButton::clicked, this, [this] {
-		QString url = urlEdit_->text().trimmed();
-		if (url.isEmpty())
-			return;
-		obs_data_t *s = obs_data_create();
-		obs_data_set_bool(s, "is_local_file", false);
-		obs_data_set_string(s, "input", url.toUtf8().constData());
-		obs_data_set_bool(s, "restart_on_activate", true);
-		obs_data_set_int(s, "reconnect_delay_sec", 3);
-		obs_data_set_int(s, "buffering_mb", 1);
-		obs_data_set_bool(s, "hw_decode", true);
-		obs_data_set_bool(s, "close_when_inactive", false);
-		obs_sceneitem_t *item = core_.AddSource("ffmpeg_source", "網路影片", s);
-		obs_data_release(s);
-		AddItem(item, QStringLiteral("網路影片：") + url);
-	});
-
-	sourceList_ = new QListWidget;
-	sourceList_->setMinimumHeight(140);
-	v->addWidget(new QLabel(QStringLiteral("播出畫面中的訊號源（勾選＝顯示，最上面＝最上層）")));
-	v->addWidget(sourceList_);
-	connect(sourceList_, &QListWidget::itemChanged, this, [](QListWidgetItem *it) {
-		auto *item = reinterpret_cast<obs_sceneitem_t *>(it->data(kItemRole).value<quintptr>());
-		if (item)
-			obs_sceneitem_set_visible(item, it->checkState() == Qt::Checked);
-	});
-
-	auto *remove = new QPushButton(QStringLiteral("移除選取的訊號源"));
-	v->addWidget(remove);
-	connect(remove, &QPushButton::clicked, this, &MainWindow::RemoveSelected);
-	return box;
+	h->addWidget(logBtn);
+	clockLabel_ = new QLabel;
+	clockLabel_->setObjectName(QStringLiteral("clock"));
+	h->addWidget(clockLabel_);
+	return bar;
 }
 
-QWidget *MainWindow::BuildAudioPanel()
+QWidget *MainWindow::BuildSwitcher()
 {
-	auto *box = new QGroupBox(QStringLiteral("音訊"));
-	auto *v = new QVBoxLayout(box);
+	auto *w = new QWidget;
+	auto *v = new QVBoxLayout(w);
+	v->setContentsMargins(10, 10, 10, 10);
+	v->setSpacing(10);
 
-	auto addMute = [this, v](obs_source_t *src, const QString &label) {
-		auto *cb = new QCheckBox(label + QStringLiteral("　靜音"));
-		if (!src) {
-			cb->setEnabled(false);
-			cb->setText(label + QStringLiteral("（找不到裝置）"));
-		} else {
-			cb->setChecked(obs_source_muted(src));
-			connect(cb, &QCheckBox::toggled, this, [src](bool on) { obs_source_set_muted(src, on); });
-		}
-		v->addWidget(cb);
+	// 預覽 ｜ 轉場 ｜ 播出
+	auto *monitors = new QHBoxLayout;
+	monitors->setSpacing(10);
+
+	auto *pvwBox = new QVBoxLayout;
+	auto *pvwTitle = new QLabel(
+		QStringLiteral("預覽 PVW　<span style='color:#8a90a0'>拖曳疊加調整位置、滾輪縮放</span>"));
+	pvwTitle->setObjectName(QStringLiteral("pvwTitle"));
+	pvwDisplay_ = new Display(engine_, Display::Mode::Preview);
+	pvwDisplay_->onOverlayChanged = [this] { ScheduleSave(); };
+	auto *pvwFrame = new QFrame;
+	pvwFrame->setObjectName(QStringLiteral("pvwFrame"));
+	auto *pf = new QVBoxLayout(pvwFrame);
+	pf->setContentsMargins(3, 3, 3, 3);
+	pf->addWidget(pvwDisplay_);
+	pvwBox->addWidget(pvwTitle);
+	pvwBox->addWidget(pvwFrame, 1);
+
+	auto *mid = new QVBoxLayout;
+	mid->setSpacing(8);
+	mid->addStretch(1);
+	cutButton_ = BigButton(QStringLiteral("CUT"), QStringLiteral("cut"));
+	autoButton_ = BigButton(QStringLiteral("AUTO"), QStringLiteral("take"));
+	cutButton_->setToolTip(QStringLiteral("直接切換（Enter）"));
+	autoButton_->setToolTip(QStringLiteral("轉場切換（空白鍵）"));
+	connect(cutButton_, &QPushButton::clicked, this, &MainWindow::DoCut);
+	connect(autoButton_, &QPushButton::clicked, this, &MainWindow::DoAuto);
+	transitionBox_ = new QComboBox;
+	for (const auto &t : engine_.TransitionTypes())
+		transitionBox_->addItem(Q(t.name), Q(t.id));
+	transitionBox_->setCurrentIndex(std::max(0, transitionBox_->findData(Q(engine_.TransitionType()))));
+	connect(transitionBox_, &QComboBox::activated, this, [this](int) {
+		engine_.SetTransitionType(S(transitionBox_->currentData().toString()));
+		ScheduleSave();
+	});
+	durationBox_ = new QSpinBox;
+	durationBox_->setRange(0, 5000);
+	durationBox_->setSingleStep(100);
+	durationBox_->setSuffix(QStringLiteral(" ms"));
+	durationBox_->setValue(engine_.TransitionDuration());
+	connect(durationBox_, &QSpinBox::valueChanged, this, [this](int value) {
+		engine_.SetTransitionDuration(value);
+		ScheduleSave();
+	});
+	mid->addWidget(cutButton_);
+	mid->addWidget(autoButton_);
+	mid->addWidget(new QLabel(QStringLiteral("轉場")));
+	mid->addWidget(transitionBox_);
+	mid->addWidget(durationBox_);
+	mid->addStretch(1);
+	auto *midW = new QWidget;
+	midW->setLayout(mid);
+	midW->setFixedWidth(120);
+
+	auto *pgmBox = new QVBoxLayout;
+	auto *pgmTitle = new QLabel(QStringLiteral("播出 PGM"));
+	pgmTitle->setObjectName(QStringLiteral("pgmTitle"));
+	pgmDisplay_ = new Display(engine_, Display::Mode::Program);
+	auto *pgmFrame = new QFrame;
+	pgmFrame->setObjectName(QStringLiteral("pgmFrame"));
+	auto *gf = new QVBoxLayout(pgmFrame);
+	gf->setContentsMargins(3, 3, 3, 3);
+	gf->addWidget(pgmDisplay_);
+	pgmBox->addWidget(pgmTitle);
+	pgmBox->addWidget(pgmFrame, 1);
+
+	monitors->addLayout(pvwBox, 1);
+	monitors->addWidget(midW);
+	monitors->addLayout(pgmBox, 1);
+	v->addLayout(monitors, 1);
+
+	// 訊號源切換列
+	auto *busGroup = new QGroupBox(QStringLiteral("訊號源　（數字鍵 1–9 放到預覽）"));
+	auto *busOuter = new QHBoxLayout(busGroup);
+	auto *busScroll = new QScrollArea;
+	busScroll->setWidgetResizable(true);
+	busScroll->setFrameShape(QFrame::NoFrame);
+	busScroll->setFixedHeight(78);
+	auto *busInner = new QWidget;
+	busLayout_ = new QHBoxLayout(busInner);
+	busLayout_->setContentsMargins(0, 0, 0, 0);
+	busLayout_->setSpacing(8);
+	busScroll->setWidget(busInner);
+	busOuter->addWidget(busScroll, 1);
+	auto *addSrc = new QPushButton(QStringLiteral("＋ 新增訊號源"));
+	addSrc->setObjectName(QStringLiteral("accent"));
+	auto *menu = new QMenu(addSrc);
+	struct Item {
+		const char *label;
+		const char *kind;
 	};
-	addMute(core_.DesktopAudio(), QStringLiteral("桌面音訊（電腦播放的聲音）"));
-	addMute(core_.MicAudio(), QStringLiteral("麥克風"));
-	return box;
+	const Item items[] = {
+		{"攝影機／擷取卡／導播機 USB", "camera"},
+		{"螢幕擷取", "screen"},
+		{"視窗擷取", "window"},
+		{"遊戲擷取", "game"},
+		{"網路影片（RTMP／SRT／RTSP／HLS／網址）", "url"},
+		{"影片／音樂檔案", "media"},
+		{"圖片", "image"},
+		{"純色", "color"},
+		{"文字", "text"},
+		{"麥克風／音訊介面", "mic"},
+		{"系統聲音（桌面音訊）", "desktop"},
+		{"指定程式的聲音", "app"},
+	};
+	for (const auto &it : items) {
+		const QString kind = QString::fromLatin1(it.kind);
+		if (kind == QLatin1String("game") && platform::kGame == nullptr)
+			continue;
+		QAction *a = menu->addAction(QString::fromUtf8(it.label));
+		connect(a, &QAction::triggered, this, [this, kind] { AddSourceOfType(kind); });
+	}
+	addSrc->setMenu(menu);
+	busOuter->addWidget(addSrc);
+	v->addWidget(busGroup);
+
+	// 疊加列
+	auto *ovlGroup = new QGroupBox(QStringLiteral("疊加 OVL　（Q W E R T Y：先上預覽，CUT／AUTO 一起送出）"));
+	auto *ovlOuter = new QHBoxLayout(ovlGroup);
+	auto *ovlInner = new QWidget;
+	ovlLayout_ = new QHBoxLayout(ovlInner);
+	ovlLayout_->setContentsMargins(0, 0, 0, 0);
+	ovlLayout_->setSpacing(8);
+	ovlOuter->addWidget(ovlInner, 1);
+	directSend_ = new QCheckBox(QStringLiteral("直接送出（不經預覽）"));
+	connect(directSend_, &QCheckBox::toggled, this, [this](bool) { SaveSettings(); });
+	ovlOuter->addWidget(directSend_);
+	v->addWidget(ovlGroup);
+	return w;
 }
 
-QWidget *MainWindow::BuildStreamPanel()
+QWidget *MainWindow::BuildSourcesTab()
 {
-	auto *box = new QGroupBox(QStringLiteral("推流"));
-	auto *form = new QFormLayout(box);
+	auto *w = new QWidget;
+	auto *v = new QVBoxLayout(w);
+	sourceList_ = new QListWidget;
+	v->addWidget(new QLabel(QStringLiteral("所有訊號源（影像與音訊）。雙擊開啟設定。")));
+	v->addWidget(sourceList_, 1);
+	connect(sourceList_, &QListWidget::itemDoubleClicked, this,
+		[this](QListWidgetItem *it) { EditSource(S(it->data(Qt::UserRole).toString())); });
+	auto *row = new QHBoxLayout;
+	auto *props = new QPushButton(QStringLiteral("設定"));
+	auto *rename = new QPushButton(QStringLiteral("重新命名"));
+	auto *remove = new QPushButton(QStringLiteral("移除"));
+	row->addWidget(props);
+	row->addWidget(rename);
+	row->addWidget(remove);
+	v->addLayout(row);
+	auto current = [this] {
+		auto *it = sourceList_->currentItem();
+		return it ? S(it->data(Qt::UserRole).toString()) : std::string();
+	};
+	connect(props, &QPushButton::clicked, this, [this, current] { EditSource(current()); });
+	connect(rename, &QPushButton::clicked, this, [this, current] { RenameSource(current()); });
+	connect(remove, &QPushButton::clicked, this, [this, current] { RemoveSource(current()); });
+	return w;
+}
 
-	platformBox_ = new QComboBox;
-	for (const auto &p : kPlatforms)
-		platformBox_->addItem(QString::fromUtf8(p.name), QString::fromUtf8(p.server));
-	serverEdit_ = new QLineEdit;
-	keyEdit_ = new QLineEdit;
-	keyEdit_->setEchoMode(QLineEdit::Password);
-	keyEdit_->setPlaceholderText(QStringLiteral("從平台後台複製串流金鑰"));
-	auto *showKey = new QCheckBox(QStringLiteral("顯示金鑰"));
-	connect(showKey, &QCheckBox::toggled, this,
-		[this](bool on) { keyEdit_->setEchoMode(on ? QLineEdit::Normal : QLineEdit::Password); });
-
-	connect(platformBox_, &QComboBox::currentIndexChanged, this, [this](int) {
-		QString server = platformBox_->currentData().toString();
-		if (!server.isEmpty())
-			serverEdit_->setText(server);
+QWidget *MainWindow::BuildOverlayTab()
+{
+	auto *w = new QWidget;
+	auto *v = new QVBoxLayout(w);
+	auto *grid = new QGridLayout;
+	const char *kinds[][2] = {{"台標", "logo"},  {"人名條", "lower"}, {"跑馬燈", "ticker"},
+				  {"時鐘", "clock"}, {"圖片", "image"},   {"文字", "text"}};
+	for (int i = 0; i < 6; i++) {
+		auto *b = new QPushButton(QStringLiteral("＋ ") + QString::fromUtf8(kinds[i][0]));
+		const QString kind = QString::fromLatin1(kinds[i][1]);
+		connect(b, &QPushButton::clicked, this, [this, kind] { AddOverlayOfKind(kind); });
+		grid->addWidget(b, i / 3, i % 3);
+	}
+	v->addLayout(grid);
+	overlayList_ = new QListWidget;
+	v->addWidget(new QLabel(QStringLiteral("雙擊編輯文字；在預覽畫面拖曳調整位置、滾輪縮放。")));
+	v->addWidget(overlayList_, 1);
+	connect(overlayList_, &QListWidget::itemDoubleClicked, this,
+		[this](QListWidgetItem *it) { EditOverlay(S(it->data(Qt::UserRole).toString())); });
+	connect(overlayList_, &QListWidget::currentItemChanged, this, [this](QListWidgetItem *it, QListWidgetItem *) {
+		engine_.SetSelectedOverlay(it ? S(it->data(Qt::UserRole).toString()) : std::string());
 	});
+	auto *row = new QHBoxLayout;
+	auto *edit = new QPushButton(QStringLiteral("編輯"));
+	auto *reset = new QPushButton(QStringLiteral("重設位置"));
+	auto *remove = new QPushButton(QStringLiteral("刪除"));
+	row->addWidget(edit);
+	row->addWidget(reset);
+	row->addWidget(remove);
+	v->addLayout(row);
+	auto current = [this] {
+		auto *it = overlayList_->currentItem();
+		return it ? S(it->data(Qt::UserRole).toString()) : std::string();
+	};
+	connect(edit, &QPushButton::clicked, this, [this, current] { EditOverlay(current()); });
+	connect(reset, &QPushButton::clicked, this, [this, current] {
+		if (Overlay *ov = engine_.FindOverlay(current())) {
+			engine_.ResetOverlayPosition(ov);
+			ScheduleSave();
+		}
+	});
+	connect(remove, &QPushButton::clicked, this, [this, current] {
+		const std::string uid = current();
+		if (uid.empty())
+			return;
+		engine_.RemoveOverlay(uid);
+		RebuildOverlayButtons();
+		RebuildOverlayList();
+		ScheduleSave();
+	});
+	return w;
+}
 
+QWidget *MainWindow::BuildOutputTab()
+{
+	auto *w = new QWidget;
+	auto *v = new QVBoxLayout(w);
+
+	auto *tg = new QGroupBox(QStringLiteral("推流目標（可同時推多個平台，只編碼一次）"));
+	auto *tv = new QVBoxLayout(tg);
+	targetTable_ = new QTableWidget(0, 5);
+	targetTable_->setHorizontalHeaderLabels({QStringLiteral("啟用"), QStringLiteral("平台"),
+						 QStringLiteral("伺服器"), QStringLiteral("串流金鑰"),
+						 QStringLiteral("狀態")});
+	targetTable_->horizontalHeader()->setSectionResizeMode(2, QHeaderView::Stretch);
+	targetTable_->horizontalHeader()->setSectionResizeMode(4, QHeaderView::ResizeToContents);
+	targetTable_->verticalHeader()->setVisible(false);
+	targetTable_->setSelectionBehavior(QAbstractItemView::SelectRows);
+	targetTable_->setMinimumHeight(150);
+	tv->addWidget(targetTable_);
+	auto *trow = new QHBoxLayout;
+	auto *addT = new QPushButton(QStringLiteral("＋ 新增目標"));
+	auto *delT = new QPushButton(QStringLiteral("移除選取"));
+	trow->addWidget(addT);
+	trow->addWidget(delT);
+	trow->addStretch(1);
+	tv->addLayout(trow);
+	connect(addT, &QPushButton::clicked, this, [this] {
+		if (engine_.Streaming())
+			return;
+		Target t;
+		t.name = kPlatforms[0].name;
+		t.server = kPlatforms[0].server;
+		engine_.Targets().push_back(t);
+		RebuildTargets();
+		ScheduleSave();
+	});
+	connect(delT, &QPushButton::clicked, this, [this] {
+		const int r = targetTable_->currentRow();
+		auto &ts = engine_.Targets();
+		if (r < 0 || r >= (int)ts.size() || engine_.Streaming())
+			return;
+		ts.erase(ts.begin() + r);
+		RebuildTargets();
+		ScheduleSave();
+	});
+	v->addWidget(tg);
+
+	auto *eg = new QGroupBox(QStringLiteral("輸出設定（1920×1080）"));
+	auto *ef = new QFormLayout(eg);
 	encoderBox_ = new QComboBox;
-	for (const auto &e : core_.VideoEncoders())
+	for (const auto &e : engine_.VideoEncoders())
 		encoderBox_->addItem(Q(e.name), Q(e.id));
-
 	bitrateBox_ = new QSpinBox;
 	bitrateBox_->setRange(1000, 20000);
 	bitrateBox_->setSingleStep(500);
 	bitrateBox_->setSuffix(QStringLiteral(" kbps"));
 	bitrateBox_->setValue(6000);
-
+	bitrateBox_->setToolTip(
+		QStringLiteral("1080p30 建議 4500–6000；1080p60 建議 6000–9000。網路上傳速度至少要碼率的 1.5 倍。"));
+	fpsBox_ = new QComboBox;
+	for (const auto &f : kFps)
+		fpsBox_->addItem(QString::fromLatin1(f.name) + QStringLiteral(" fps"));
+	connect(fpsBox_, &QComboBox::activated, this, [this](int) { ApplyFps(); });
 	lowLatencyBox_ = new QCheckBox(QStringLiteral("低延遲（互動直播建議開啟）"));
 	lowLatencyBox_->setChecked(true);
 	dynBitrateBox_ = new QCheckBox(QStringLiteral("網路壅塞時自動降碼率"));
+	ef->addRow(QStringLiteral("編碼器"), encoderBox_);
+	ef->addRow(QStringLiteral("視訊碼率"), bitrateBox_);
+	ef->addRow(QStringLiteral("幀率"), fpsBox_);
+	ef->addRow(QString(), lowLatencyBox_);
+	ef->addRow(QString(), dynBitrateBox_);
+	v->addWidget(eg);
 
-	streamButton_ = new QPushButton(QStringLiteral("開始推流"));
-	streamButton_->setMinimumHeight(40);
-	streamStatus_ = new QLabel(QStringLiteral("未推流"));
-	streamStatus_->setWordWrap(true);
+	auto *btns = new QHBoxLayout;
+	streamButton_ = BigButton(QStringLiteral("開始推流"), QStringLiteral("stream"));
+	recordButton_ = BigButton(QStringLiteral("開始錄影"), QStringLiteral("record"));
 	connect(streamButton_, &QPushButton::clicked, this, &MainWindow::ToggleStream);
-
-	form->addRow(QStringLiteral("平台"), platformBox_);
-	form->addRow(QStringLiteral("伺服器"), serverEdit_);
-	form->addRow(QStringLiteral("串流金鑰"), keyEdit_);
-	form->addRow(QString(), showKey);
-	form->addRow(QStringLiteral("編碼器"), encoderBox_);
-	form->addRow(QStringLiteral("視訊碼率"), bitrateBox_);
-	form->addRow(QString(), lowLatencyBox_);
-	form->addRow(QString(), dynBitrateBox_);
-	form->addRow(streamButton_);
-	form->addRow(streamStatus_);
-	return box;
+	connect(recordButton_, &QPushButton::clicked, this, &MainWindow::ToggleRecord);
+	btns->addWidget(streamButton_);
+	btns->addWidget(recordButton_);
+	v->addLayout(btns);
+	outputStatus_ = new QLabel(QStringLiteral("未推流"));
+	outputStatus_->setWordWrap(true);
+	v->addWidget(outputStatus_);
+	auto *recDir = new QPushButton(QStringLiteral("開啟錄影資料夾"));
+	connect(recDir, &QPushButton::clicked, this, [] {
+		const QString dir = QStandardPaths::writableLocation(QStandardPaths::MoviesLocation) +
+				    QStringLiteral("/Meikou Live Studio");
+		QDir().mkpath(dir);
+		QDesktopServices::openUrl(QUrl::fromLocalFile(dir));
+	});
+	v->addWidget(recDir);
+	v->addStretch(1);
+	return w;
 }
 
-void MainWindow::RefreshCameras()
+void MainWindow::SetupShortcuts()
 {
-	QString current = cameraBox_->currentData().toString();
-	cameraBox_->clear();
-	for (const auto &c : core_.ListProperty("dshow_input", "video_device_id"))
-		cameraBox_->addItem(Q(c.name), Q(c.id));
-	if (cameraBox_->count() == 0)
-		cameraBox_->addItem(QStringLiteral("（沒有偵測到影像裝置）"), QString());
-	int idx = cameraBox_->findData(current);
-	if (idx >= 0)
-		cameraBox_->setCurrentIndex(idx);
+	for (int i = 0; i < 9; i++) {
+		auto *sc = new QShortcut(QKeySequence(Qt::Key_1 + i), this);
+		connect(sc, &QShortcut::activated, this, [this, i] {
+			if (TypingFocus())
+				return;
+			auto vids = engine_.VideoInputs();
+			if (i < (int)vids.size()) {
+				engine_.SetPreview(vids[i]);
+				RefreshBusState();
+			}
+		});
+	}
+	auto onKey = [this](int key, void (MainWindow::*fn)()) {
+		auto *sc = new QShortcut(QKeySequence(key), this);
+		connect(sc, &QShortcut::activated, this, [this, fn] {
+			if (!TypingFocus())
+				(this->*fn)();
+		});
+	};
+	onKey(Qt::Key_Space, &MainWindow::DoAuto);
+	onKey(Qt::Key_Return, &MainWindow::DoCut);
+	onKey(Qt::Key_Enter, &MainWindow::DoCut);
+	for (int i = 0; kOverlayKeys[i]; i++) {
+		auto *sc = new QShortcut(QKeySequence(QString(QLatin1Char(kOverlayKeys[i]))), this);
+		connect(sc, &QShortcut::activated, this, [this, i] {
+			if (TypingFocus())
+				return;
+			const auto &ovs = engine_.Overlays();
+			if (i < (int)ovs.size()) {
+				engine_.ToggleOverlay(ovs[i]->uid, directSend_->isChecked());
+				RefreshOverlayButtons();
+			}
+		});
+	}
 }
 
-void MainWindow::AddItem(obs_sceneitem_t *item, const QString &label)
+// ---------------------------------------------------------------- 訊號源
+
+void MainWindow::RebuildBus()
 {
-	if (!item) {
-		QMessageBox::warning(this, windowTitle(), QStringLiteral("無法加入：") + label);
+	while (QLayoutItem *it = busLayout_->takeAt(0)) {
+		delete it->widget();
+		delete it;
+	}
+	int n = 0;
+	for (Input *in : engine_.VideoInputs()) {
+		n++;
+		auto *b = new QPushButton(
+			QStringLiteral("%1\n%2").arg(n <= 9 ? QString::number(n) : QString(), Q(in->name)));
+		b->setObjectName(QStringLiteral("busButton"));
+		b->setProperty("uid", Q(in->uid));
+		b->setMinimumSize(128, 62);
+		b->setMaximumWidth(200);
+		b->setFocusPolicy(Qt::NoFocus);
+		b->setContextMenuPolicy(Qt::CustomContextMenu);
+		const std::string uid = in->uid;
+		connect(b, &QPushButton::clicked, this, [this, uid] {
+			engine_.SetPreview(engine_.FindInput(uid));
+			RefreshBusState();
+		});
+		connect(b, &QPushButton::customContextMenuRequested, this, [this, b, uid](const QPoint &pos) {
+			QMenu m;
+			QAction *props = m.addAction(QStringLiteral("設定…"));
+			QAction *rename = m.addAction(QStringLiteral("重新命名…"));
+			m.addSeparator();
+			QAction *remove = m.addAction(QStringLiteral("移除"));
+			QAction *chosen = m.exec(b->mapToGlobal(pos));
+			// 選單關閉後才處理，避免在按鈕自己的事件裡把按鈕刪掉
+			if (chosen == props)
+				QTimer::singleShot(0, this, [this, uid] { EditSource(uid); });
+			else if (chosen == rename)
+				QTimer::singleShot(0, this, [this, uid] { RenameSource(uid); });
+			else if (chosen == remove)
+				QTimer::singleShot(0, this, [this, uid] { RemoveSource(uid); });
+		});
+		busLayout_->addWidget(b);
+	}
+	if (n == 0) {
+		auto *hint = new QLabel(
+			QStringLiteral("還沒有影像訊號源。按右邊「＋ 新增訊號源」加入攝影機、擷取卡、螢幕或網路影片。"));
+		hint->setObjectName(QStringLiteral("hint"));
+		busLayout_->addWidget(hint);
+	}
+	busLayout_->addStretch(1);
+	RefreshBusState();
+}
+
+void MainWindow::RefreshBusState()
+{
+	const Input *pvw = engine_.Preview(), *pgm = engine_.Program();
+	for (int i = 0; i < busLayout_->count(); i++) {
+		auto *b = qobject_cast<QPushButton *>(busLayout_->itemAt(i)->widget());
+		if (!b)
+			continue;
+		const std::string uid = S(b->property("uid").toString());
+		const QString state = pgm && pgm->uid == uid   ? QStringLiteral("pgm")
+				      : pvw && pvw->uid == uid ? QStringLiteral("pvw")
+							       : QString();
+		if (b->property("state").toString() != state) {
+			b->setProperty("state", state);
+			Repolish(b);
+		}
+	}
+}
+
+void MainWindow::RebuildSourceList()
+{
+	sourceList_->clear();
+	for (const auto &in : engine_.Inputs()) {
+		auto *it = new QListWidgetItem((in->audioOnly ? QStringLiteral("🔊  ") : QStringLiteral("🎥  ")) +
+					       Q(in->name));
+		it->setData(Qt::UserRole, Q(in->uid));
+		sourceList_->addItem(it);
+	}
+}
+
+void MainWindow::SourcesChanged()
+{
+	RebuildBus();
+	RebuildSourceList();
+	mixer_->Rebuild();
+	ScheduleSave();
+}
+
+void MainWindow::AddSourceOfType(const QString &kind)
+{
+	auto countOf = [this](const std::string &type) {
+		int n = 0;
+		for (const auto &in : engine_.Inputs())
+			if (in->typeId == type)
+				n++;
+		return std::to_string(n + 1);
+	};
+
+	std::string type, name;
+	obs_data_t *s = obs_data_create();
+	bool openProps = true;
+	auto cancel = [&s] {
+		obs_data_release(s);
+		s = nullptr;
+	};
+
+	if (kind == QLatin1String("camera")) {
+		type = platform::kCamera;
+		name = "攝影機 " + countOf(type);
+		const char *prop = platform::kTextIsGdi ? "video_device_id" : "device";
+		auto devices = engine_.ListProperty(type.c_str(), prop);
+		for (const auto &d : devices) {
+			if (d.id.empty())
+				continue;
+			obs_data_set_string(s, prop, d.id.c_str());
+			name = d.name;
+			break;
+		}
+	} else if (kind == QLatin1String("screen")) {
+		type = platform::kScreen;
+		name = "螢幕擷取 " + countOf(type);
+	} else if (kind == QLatin1String("window")) {
+		type = platform::kWindow;
+		name = "視窗擷取 " + countOf(type);
+	} else if (kind == QLatin1String("game")) {
+		type = platform::kGame ? platform::kGame : "";
+		name = "遊戲擷取 " + countOf(type);
+	} else if (kind == QLatin1String("url")) {
+		bool ok = false;
+		const QString url = QInputDialog::getText(
+			this, QStringLiteral("加入網路影片"),
+			QStringLiteral("網址（rtmp://、srt://、rtsp://、https://….m3u8 或影片網址）："), QLineEdit::Normal,
+			QString(), &ok);
+		if (!ok || url.trimmed().isEmpty()) {
+			cancel();
+			return;
+		}
+		type = "ffmpeg_source";
+		name = "網路影片 " + countOf(type);
+		obs_data_set_bool(s, "is_local_file", false);
+		obs_data_set_string(s, "input", S(url.trimmed()).c_str());
+		obs_data_set_bool(s, "restart_on_activate", false);
+		obs_data_set_bool(s, "close_when_inactive", false);
+		obs_data_set_int(s, "reconnect_delay_sec", 3);
+		obs_data_set_int(s, "buffering_mb", 1);
+		obs_data_set_bool(s, "hw_decode", true);
+		openProps = false;
+	} else if (kind == QLatin1String("media")) {
+		const QString f = QFileDialog::getOpenFileName(
+			this, QStringLiteral("選擇影片或音樂"), QString(),
+			QStringLiteral("影音檔 (*.mp4 *.mov *.mkv *.avi *.webm *.ts *.flv *.mp3 *.wav *.aac *.m4a *.flac);;所有檔案 (*.*)"));
+		if (f.isEmpty()) {
+			cancel();
+			return;
+		}
+		type = "ffmpeg_source";
+		name = S(QFileInfo(f).completeBaseName());
+		obs_data_set_bool(s, "is_local_file", true);
+		obs_data_set_string(s, "local_file", S(f).c_str());
+		obs_data_set_bool(s, "looping", true);
+		obs_data_set_bool(s, "restart_on_activate", true);
+		obs_data_set_bool(s, "hw_decode", true);
+		openProps = false;
+	} else if (kind == QLatin1String("image")) {
+		const QString f = QFileDialog::getOpenFileName(
+			this, QStringLiteral("選擇圖片"), QString(),
+			QStringLiteral("圖片 (*.png *.jpg *.jpeg *.bmp *.gif *.webp);;所有檔案 (*.*)"));
+		if (f.isEmpty()) {
+			cancel();
+			return;
+		}
+		type = "image_source";
+		name = S(QFileInfo(f).completeBaseName());
+		obs_data_set_string(s, "file", S(f).c_str());
+		openProps = false;
+	} else if (kind == QLatin1String("color")) {
+		const QColor c = QColorDialog::getColor(QColor(30, 40, 80), this, QStringLiteral("選擇顏色"));
+		if (!c.isValid()) {
+			cancel();
+			return;
+		}
+		type = "color_source_v3";
+		name = "純色 " + S(c.name().toUpper());
+		obs_data_set_int(s, "color",
+				 (long long)(((uint32_t)255 << 24) | ((uint32_t)c.blue() << 16) |
+					     ((uint32_t)c.green() << 8) | (uint32_t)c.red()));
+		obs_data_set_int(s, "width", 1920);
+		obs_data_set_int(s, "height", 1080);
+		openProps = false;
+	} else if (kind == QLatin1String("text")) {
+		type = platform::kText;
+		name = "文字 " + countOf(type);
+		obs_data_set_string(s, "text", "Meikou Live Studio");
+	} else if (kind == QLatin1String("mic")) {
+		type = platform::kAudioIn;
+		name = "麥克風 " + countOf(type);
+		obs_data_set_string(s, "device_id", "default");
+	} else if (kind == QLatin1String("desktop")) {
+		type = platform::kAudioOut;
+		name = "系統聲音 " + countOf(type);
+		obs_data_set_string(s, "device_id", "default");
+	} else if (kind == QLatin1String("app")) {
+		type = platform::kAppAudio;
+		name = "程式聲音 " + countOf(type);
+	}
+
+	Input *in = type.empty() ? nullptr : engine_.AddInput(type, name, s);
+	obs_data_release(s);
+	if (!in) {
+		QMessageBox::warning(this, windowTitle(), QStringLiteral("無法建立這個訊號源（這台電腦可能不支援）。"));
 		return;
 	}
-	auto *it = new QListWidgetItem(label);
-	it->setFlags(it->flags() | Qt::ItemIsUserCheckable);
-	it->setCheckState(Qt::Checked);
-	it->setData(kItemRole, QVariant::fromValue(reinterpret_cast<quintptr>(item)));
-	sourceList_->blockSignals(true);
-	sourceList_->insertItem(0, it);
-	sourceList_->blockSignals(false);
+	if (!in->audioOnly && !engine_.Preview())
+		engine_.SetPreview(in);
+	SourcesChanged();
+	if (openProps)
+		EditSource(in->uid);
 }
 
-void MainWindow::RemoveSelected()
+void MainWindow::EditSource(const std::string &uid)
 {
-	QListWidgetItem *it = sourceList_->currentItem();
-	if (!it)
+	Input *in = engine_.FindInput(uid);
+	if (!in || !in->source)
 		return;
-	auto *item = reinterpret_cast<obs_sceneitem_t *>(it->data(kItemRole).value<quintptr>());
-	core_.RemoveItem(item);
-	delete it;
+	PropertiesDialog dlg(in->source, QStringLiteral("設定：%1").arg(Q(in->name)), this);
+	dlg.exec();
+	// 設定改變可能讓「只有聲音」的狀態或音軌變化，重建一次比較穩
+	SourcesChanged();
 }
 
-void MainWindow::SetStreamUi(bool streaming)
+void MainWindow::RenameSource(const std::string &uid)
 {
-	streamButton_->setText(streaming ? QStringLiteral("停止推流") : QStringLiteral("開始推流"));
-	streamButton_->setStyleSheet(streaming ? QStringLiteral("background:#7a1d1d;color:white;font-weight:600")
-					       : QStringLiteral("background:#1b6b3a;color:white;font-weight:600"));
-	for (QWidget *w : {(QWidget *)platformBox_, (QWidget *)serverEdit_, (QWidget *)keyEdit_,
-			   (QWidget *)encoderBox_, (QWidget *)bitrateBox_, (QWidget *)lowLatencyBox_,
-			   (QWidget *)dynBitrateBox_})
-		w->setEnabled(!streaming);
+	Input *in = engine_.FindInput(uid);
+	if (!in)
+		return;
+	bool ok = false;
+	const QString name = QInputDialog::getText(this, QStringLiteral("重新命名"), QStringLiteral("名稱："),
+						   QLineEdit::Normal, Q(in->name), &ok);
+	if (!ok || name.trimmed().isEmpty())
+		return;
+	engine_.RenameInput(uid, S(name.trimmed()));
+	SourcesChanged();
+}
+
+void MainWindow::RemoveSource(const std::string &uid)
+{
+	Input *in = engine_.FindInput(uid);
+	if (!in)
+		return;
+	const QString question = engine_.Program() == in
+					 ? QStringLiteral("「%1」正在播出，確定要移除嗎？").arg(Q(in->name))
+					 : QStringLiteral("確定要移除「%1」嗎？").arg(Q(in->name));
+	if (QMessageBox::question(this, windowTitle(), question) != QMessageBox::Yes)
+		return;
+	engine_.RemoveInput(uid);
+	SourcesChanged();
+}
+
+// ---------------------------------------------------------------- 疊加
+
+void MainWindow::RebuildOverlayButtons()
+{
+	while (QLayoutItem *it = ovlLayout_->takeAt(0)) {
+		delete it->widget();
+		delete it;
+	}
+	int i = 0;
+	for (const auto &ov : engine_.Overlays()) {
+		const QString key = (i < 10) ? QString(QLatin1Char(kOverlayKeys[i])) : QString();
+		auto *b = new QPushButton(key.isEmpty() ? Q(ov->name) : QStringLiteral("%1  %2").arg(key, Q(ov->name)));
+		b->setObjectName(QStringLiteral("ovlButton"));
+		b->setProperty("uid", Q(ov->uid));
+		b->setMinimumHeight(38);
+		b->setFocusPolicy(Qt::NoFocus);
+		const std::string uid = ov->uid;
+		connect(b, &QPushButton::clicked, this, [this, uid] {
+			engine_.ToggleOverlay(uid, directSend_->isChecked());
+			RefreshOverlayButtons();
+		});
+		ovlLayout_->addWidget(b);
+		i++;
+	}
+	if (i == 0) {
+		auto *hint = new QLabel(QStringLiteral("到右邊「疊加素材」新增台標、人名條、跑馬燈或時鐘。"));
+		hint->setObjectName(QStringLiteral("hint"));
+		ovlLayout_->addWidget(hint);
+	}
+	ovlLayout_->addStretch(1);
+	RefreshOverlayButtons();
+}
+
+void MainWindow::RefreshOverlayButtons()
+{
+	for (int i = 0; i < ovlLayout_->count(); i++) {
+		auto *b = qobject_cast<QPushButton *>(ovlLayout_->itemAt(i)->widget());
+		if (!b)
+			continue;
+		Overlay *ov = engine_.FindOverlay(S(b->property("uid").toString()));
+		if (!ov)
+			continue;
+		const QString state = ov->state == OverlayState::Program   ? QStringLiteral("pgm")
+				      : ov->state == OverlayState::Preview ? QStringLiteral("pvw")
+									   : QString();
+		if (b->property("state").toString() != state) {
+			b->setProperty("state", state);
+			Repolish(b);
+		}
+	}
+}
+
+void MainWindow::RebuildOverlayList()
+{
+	overlayList_->clear();
+	for (const auto &ov : engine_.Overlays()) {
+		auto *it = new QListWidgetItem(QStringLiteral("［%1］%2").arg(KindName(ov->kind), Q(ov->name)));
+		it->setData(Qt::UserRole, Q(ov->uid));
+		overlayList_->addItem(it);
+	}
+}
+
+void MainWindow::AddOverlayOfKind(const QString &kind)
+{
+	const std::string k = S(kind);
+	std::string name, t1, t2, file;
+	uint32_t color = 0xFFD7263D;
+	if (kind == QLatin1String("logo") || kind == QLatin1String("image")) {
+		const QString f = QFileDialog::getOpenFileName(this, QStringLiteral("選擇圖片"), QString(),
+							       QStringLiteral("圖片 (*.png *.jpg *.jpeg *.gif *.webp *.bmp)"));
+		if (f.isEmpty())
+			return;
+		file = S(f);
+		name = (kind == QLatin1String("logo") ? "台標 " : "圖片 ") + S(QFileInfo(f).completeBaseName());
+	} else if (kind == QLatin1String("lower")) {
+		name = "人名條";
+		t1 = "王小明";
+		t2 = "主持人";
+	} else if (kind == QLatin1String("ticker")) {
+		name = "跑馬燈";
+		t1 = "歡迎收看本節目　＊　記得訂閱、按讚、開啟小鈴鐺　＊　";
+		color = 0xE0101830;
+	} else if (kind == QLatin1String("clock")) {
+		name = "時鐘";
+		t1 = "● LIVE";
+	} else {
+		name = "文字";
+		t1 = "Meikou Live Studio";
+		color = 0xFFFFFFFF;
+	}
+	Overlay *ov = engine_.AddOverlay(k, name, t1, t2, file, color);
+	if (!ov) {
+		QMessageBox::warning(this, windowTitle(), QStringLiteral("無法建立這個疊加素材。"));
+		return;
+	}
+	RebuildOverlayButtons();
+	RebuildOverlayList();
+	ScheduleSave();
+	if (kind == QLatin1String("lower") || kind == QLatin1String("ticker") || kind == QLatin1String("text"))
+		EditOverlay(ov->uid);
+}
+
+void MainWindow::EditOverlay(const std::string &uid)
+{
+	Overlay *ov = engine_.FindOverlay(uid);
+	if (!ov)
+		return;
+
+	QDialog dlg(this);
+	dlg.setWindowTitle(QStringLiteral("編輯%1").arg(KindName(ov->kind)));
+	dlg.setMinimumWidth(460);
+	auto *form = new QFormLayout(&dlg);
+	auto *nameEdit = new QLineEdit(Q(ov->name));
+	form->addRow(QStringLiteral("按鈕名稱"), nameEdit);
+
+	QLineEdit *e1 = nullptr, *e2 = nullptr, *fileEdit = nullptr;
+	uint32_t color = ov->color;
+	auto paint = [](QPushButton *b, uint32_t c) {
+		const QColor qc((c >> 16) & 0xFF, (c >> 8) & 0xFF, c & 0xFF);
+		b->setStyleSheet(QStringLiteral("background:%1; color:%2")
+					 .arg(qc.name(), qc.lightness() > 140 ? QStringLiteral("#000")
+									      : QStringLiteral("#fff")));
+		b->setText(qc.name().toUpper());
+	};
+
+	if (ov->kind == "lower") {
+		e1 = new QLineEdit(Q(ov->text1));
+		e2 = new QLineEdit(Q(ov->text2));
+		form->addRow(QStringLiteral("姓名"), e1);
+		form->addRow(QStringLiteral("職稱／說明"), e2);
+	} else if (ov->kind == "ticker" || ov->kind == "text") {
+		e1 = new QLineEdit(Q(ov->text1));
+		form->addRow(QStringLiteral("文字"), e1);
+	} else if (ov->kind == "clock") {
+		e1 = new QLineEdit(Q(ov->text1));
+		form->addRow(QStringLiteral("時間前的文字"), e1);
+	} else {
+		fileEdit = new QLineEdit(Q(ov->file));
+		auto *browse = new QPushButton(QStringLiteral("瀏覽…"));
+		auto *row = new QHBoxLayout;
+		row->addWidget(fileEdit, 1);
+		row->addWidget(browse);
+		connect(browse, &QPushButton::clicked, &dlg, [&dlg, fileEdit] {
+			const QString f = QFileDialog::getOpenFileName(
+				&dlg, QStringLiteral("選擇圖片"), fileEdit->text(),
+				QStringLiteral("圖片 (*.png *.jpg *.jpeg *.gif *.webp *.bmp)"));
+			if (!f.isEmpty())
+				fileEdit->setText(f);
+		});
+		form->addRow(QStringLiteral("圖片"), row);
+	}
+	if (ov->kind == "lower" || ov->kind == "ticker" || ov->kind == "text") {
+		auto *colorBtn = new QPushButton;
+		paint(colorBtn, color);
+		connect(colorBtn, &QPushButton::clicked, &dlg, [&dlg, &color, colorBtn, paint] {
+			const QColor cur((color >> 16) & 0xFF, (color >> 8) & 0xFF, color & 0xFF, (color >> 24) & 0xFF);
+			const QColor c = QColorDialog::getColor(cur, &dlg, QString(), QColorDialog::ShowAlphaChannel);
+			if (!c.isValid())
+				return;
+			color = ((uint32_t)c.alpha() << 24) | ((uint32_t)c.red() << 16) | ((uint32_t)c.green() << 8) |
+				(uint32_t)c.blue();
+			paint(colorBtn, color);
+		});
+		form->addRow(ov->kind == "text" ? QStringLiteral("文字顏色") : QStringLiteral("底色"), colorBtn);
+	}
+	auto *bb = new QDialogButtonBox(QDialogButtonBox::Ok | QDialogButtonBox::Cancel);
+	connect(bb, &QDialogButtonBox::accepted, &dlg, &QDialog::accept);
+	connect(bb, &QDialogButtonBox::rejected, &dlg, &QDialog::reject);
+	form->addRow(bb);
+	if (dlg.exec() != QDialog::Accepted)
+		return;
+
+	if (!nameEdit->text().trimmed().isEmpty())
+		ov->name = S(nameEdit->text().trimmed());
+	if (e1)
+		ov->text1 = S(e1->text());
+	if (e2)
+		ov->text2 = S(e2->text());
+	if (fileEdit)
+		ov->file = S(fileEdit->text());
+	ov->color = color;
+	engine_.UpdateOverlay(ov);
+	RebuildOverlayButtons();
+	RebuildOverlayList();
+	ScheduleSave();
+}
+
+// ---------------------------------------------------------------- 切換與輸出
+
+void MainWindow::DoCut()
+{
+	engine_.Cut();
+	RefreshBusState();
+	RefreshOverlayButtons();
+	ScheduleSave();
+}
+
+void MainWindow::DoAuto()
+{
+	engine_.Auto();
+	RefreshBusState();
+	RefreshOverlayButtons();
+	ScheduleSave();
+}
+
+void MainWindow::RebuildTargets()
+{
+	auto &ts = engine_.Targets();
+	targetTable_->clearContents();
+	targetTable_->setRowCount((int)ts.size());
+	for (int r = 0; r < (int)ts.size(); r++) {
+		auto *en = new QCheckBox;
+		en->setChecked(ts[r].enabled);
+		connect(en, &QCheckBox::toggled, this, [this, r](bool on) {
+			if (r < (int)engine_.Targets().size())
+				engine_.Targets()[r].enabled = on;
+			ScheduleSave();
+		});
+		auto *cell = new QWidget;
+		auto *cl = new QHBoxLayout(cell);
+		cl->setContentsMargins(6, 0, 0, 0);
+		cl->addWidget(en);
+		targetTable_->setCellWidget(r, 0, cell);
+
+		auto *plat = new QComboBox;
+		for (const auto &p : kPlatforms)
+			plat->addItem(QString::fromUtf8(p.name), QString::fromUtf8(p.server));
+		int idx = plat->count() - 1;
+		for (int i = 0; i < plat->count() - 1; i++)
+			if (plat->itemData(i).toString() == Q(ts[r].server))
+				idx = i;
+		plat->setCurrentIndex(idx);
+		targetTable_->setCellWidget(r, 1, plat);
+
+		auto *server = new QLineEdit(Q(ts[r].server));
+		server->setPlaceholderText(QStringLiteral("rtmp://…"));
+		targetTable_->setCellWidget(r, 2, server);
+		auto *key = new QLineEdit(Q(ts[r].key));
+		key->setEchoMode(QLineEdit::PasswordEchoOnEdit);
+		key->setPlaceholderText(QStringLiteral("貼上串流金鑰"));
+		targetTable_->setCellWidget(r, 3, key);
+		targetTable_->setItem(r, 4, new QTableWidgetItem(Q(ts[r].status)));
+
+		connect(plat, &QComboBox::activated, this, [this, r, plat, server](int) {
+			const QString s = plat->currentData().toString();
+			if (!s.isEmpty())
+				server->setText(s);
+			if (r < (int)engine_.Targets().size()) {
+				engine_.Targets()[r].server = S(server->text().trimmed());
+				engine_.Targets()[r].name = S(plat->currentText());
+			}
+			ScheduleSave();
+		});
+		connect(server, &QLineEdit::editingFinished, this, [this, r, server] {
+			if (r < (int)engine_.Targets().size())
+				engine_.Targets()[r].server = S(server->text().trimmed());
+			ScheduleSave();
+		});
+		connect(key, &QLineEdit::editingFinished, this, [this, r, key] {
+			if (r < (int)engine_.Targets().size())
+				engine_.Targets()[r].key = S(key->text().trimmed());
+			ScheduleSave();
+		});
+	}
+}
+
+void MainWindow::RefreshTargetStatus()
+{
+	auto &ts = engine_.Targets();
+	for (int r = 0; r < (int)ts.size() && r < targetTable_->rowCount(); r++) {
+		QString st = Q(ts[r].status);
+		if (ts[r].active && !ts[r].reconnecting)
+			st = QStringLiteral("推流中 %1 kbps").arg(ts[r].kbps, 0, 'f', 0);
+		if (auto *it = targetTable_->item(r, 4)) {
+			if (it->text() != st)
+				it->setText(st);
+		}
+	}
+}
+
+EncodeConfig MainWindow::CurrentEncodeConfig() const
+{
+	EncodeConfig cfg;
+	cfg.encoderId = S(encoderBox_->currentData().toString());
+	cfg.videoKbps = bitrateBox_->value();
+	cfg.lowLatency = lowLatencyBox_->isChecked();
+	cfg.dynamicBitrate = dynBitrateBox_->isChecked();
+	return cfg;
 }
 
 void MainWindow::ToggleStream()
 {
-	if (core_.Streaming()) {
-		stopping_ = true;
+	if (engine_.Streaming()) {
+		if (QMessageBox::question(this, windowTitle(), QStringLiteral("確定要停止直播嗎？")) != QMessageBox::Yes)
+			return;
+		stoppingStream_ = true;
 		streamButton_->setEnabled(false);
-		streamStatus_->setText(QStringLiteral("正在停止…"));
-		core_.StopStream();
+		outputStatus_->setText(QStringLiteral("正在停止推流…"));
+		engine_.StopStreaming();
 		return;
 	}
-
-	StreamConfig cfg;
-	cfg.server = serverEdit_->text().trimmed().toStdString();
-	cfg.key = keyEdit_->text().trimmed().toStdString();
-	cfg.encoderId = encoderBox_->currentData().toString().toStdString();
-	cfg.videoKbps = bitrateBox_->value();
-	cfg.lowLatency = lowLatencyBox_->isChecked();
-	cfg.dynamicBitrate = dynBitrateBox_->isChecked();
-
-	if (cfg.server.empty()) {
-		QMessageBox::warning(this, windowTitle(), QStringLiteral("請先填伺服器網址"));
-		return;
+	// 先把表格裡還沒離開欄位的內容寫回去
+	auto &ts = engine_.Targets();
+	for (int r = 0; r < (int)ts.size(); r++) {
+		if (auto *s = qobject_cast<QLineEdit *>(targetTable_->cellWidget(r, 2)))
+			ts[r].server = S(s->text().trimmed());
+		if (auto *k = qobject_cast<QLineEdit *>(targetTable_->cellWidget(r, 3)))
+			ts[r].key = S(k->text().trimmed());
 	}
-	if (cfg.key.empty() && platformBox_->currentIndex() != platformBox_->count() - 1) {
-		QMessageBox::warning(this, windowTitle(), QStringLiteral("請先貼上串流金鑰"));
-		return;
-	}
-	if (cfg.encoderId.empty()) {
-		QMessageBox::warning(this, windowTitle(), QStringLiteral("找不到可用的編碼器"));
-		return;
-	}
-
 	SaveSettings();
+	SaveProject();
 	std::string err;
-	if (!core_.StartStream(cfg, err)) {
-		streamStatus_->setText(Q(err));
+	if (!engine_.StartStreaming(CurrentEncodeConfig(), err)) {
+		RefreshTargetStatus();
 		QMessageBox::warning(this, windowTitle(), Q(err));
 		return;
 	}
-	stopping_ = false;
-	SetStreamUi(true);
-	streamStatus_->setText(QStringLiteral("連線中…"));
+	stoppingStream_ = false;
+	outputStatus_->setText(QStringLiteral("正在連線…"));
+	RefreshTargetStatus();
+	UpdateStats();
 }
 
-void MainWindow::OnStreamEvent(const QString &kind, const QString &message)
+void MainWindow::ToggleRecord()
 {
-	if (kind == QLatin1String("stopped")) {
-		SetStreamUi(false);
-		streamButton_->setEnabled(true);
-		streamStatus_->setText(message);
-		streamStatus_->setStyleSheet(stopping_ ? QString() : QStringLiteral("color:#e0a030"));
-		stopping_ = false;
-	} else if (kind == QLatin1String("reconnect")) {
-		streamStatus_->setText(message);
-		streamStatus_->setStyleSheet(QStringLiteral("color:#e0a030"));
-	} else {
-		streamStatus_->setText(message);
-		streamStatus_->setStyleSheet(QString());
+	if (engine_.Recording()) {
+		recordButton_->setEnabled(false);
+		engine_.StopRecording();
+		return;
 	}
+	const QString dir = QStandardPaths::writableLocation(QStandardPaths::MoviesLocation) +
+			    QStringLiteral("/Meikou Live Studio");
+	QDir().mkpath(dir);
+	const QString path =
+		dir + QStringLiteral("/Meikou %1.mkv")
+			      .arg(QDateTime::currentDateTime().toString(QStringLiteral("yyyy-MM-dd HH-mm-ss")));
+	SaveSettings();
+	std::string err;
+	if (!engine_.StartRecording(CurrentEncodeConfig(), S(QDir::toNativeSeparators(path)), err)) {
+		QMessageBox::warning(this, windowTitle(), Q(err));
+		return;
+	}
+	UpdateStats();
+}
+
+void MainWindow::OnOutputEvent(int index, const QString &kind, const QString &message)
+{
+	if (index < 0) { // 錄影
+		recordButton_->setEnabled(true);
+		if (kind == QLatin1String("failed"))
+			QMessageBox::warning(this, windowTitle(), QStringLiteral("錄影停止：%1").arg(message));
+		else if (kind == QLatin1String("stopped"))
+			outputStatus_->setText(QStringLiteral("錄影已存檔：%1").arg(Q(engine_.RecordingPath())));
+	} else if (!engine_.Streaming()) {
+		streamButton_->setEnabled(true);
+		if (!stoppingStream_ && kind == QLatin1String("failed"))
+			outputStatus_->setText(QStringLiteral("推流停止：%1").arg(message));
+		else if (kind == QLatin1String("stopped") || kind == QLatin1String("failed"))
+			outputStatus_->setText(QStringLiteral("未推流"));
+		stoppingStream_ = false;
+	} else if (kind == QLatin1String("failed")) {
+		outputStatus_->setText(QStringLiteral("有一個目標停止：%1（其他目標繼續推流）").arg(message));
+	}
+	RefreshTargetStatus();
+	UpdateStats();
+}
+
+void MainWindow::ApplyFps()
+{
+	const int i = fpsBox_->currentIndex();
+	if (i == appliedFpsIndex_ || i < 0)
+		return;
+	if (engine_.OutputsActive()) {
+		fpsBox_->setCurrentIndex(appliedFpsIndex_);
+		return;
+	}
+	std::string err;
+	pvwDisplay_->DestroyDisplay();
+	pgmDisplay_->DestroyDisplay();
+	const bool ok = engine_.ResetVideo(kFps[i].num, kFps[i].den, err);
+	// 送一次 resize 讓兩個畫面重新建立 obs_display
+	for (Display *d : {pvwDisplay_, pgmDisplay_}) {
+		QResizeEvent e(d->size(), d->size());
+		QApplication::sendEvent(d, &e);
+	}
+	if (!ok) {
+		fpsBox_->setCurrentIndex(appliedFpsIndex_);
+		QMessageBox::warning(this, windowTitle(), Q(err));
+		return;
+	}
+	appliedFpsIndex_ = i;
+	SaveSettings();
 }
 
 void MainWindow::UpdateStats()
 {
-	Stats s = core_.QueryStats();
-	QString text = QStringLiteral("CPU %1%　畫面 %2 fps　渲染延遲掉格 %3／%4")
-			       .arg(s.cpu, 0, 'f', 1)
-			       .arg(s.renderFps, 0, 'f', 1)
-			       .arg(s.laggedFrames)
-			       .arg(s.totalFrames);
+	engine_.Tick();
+	const Stats s = engine_.QueryStats();
+	clockLabel_->setText(QTime::currentTime().toString(QStringLiteral("HH:mm:ss")));
+
 	if (s.streaming) {
-		double dropPct = s.streamFrames > 0 ? 100.0 * s.droppedFrames / s.streamFrames : 0.0;
-		text += QStringLiteral("　推流 %1 kbps　網路掉格 %2（%3%）")
-				.arg(s.streamKbps, 0, 'f', 0)
-				.arg(s.droppedFrames)
-				.arg(dropPct, 0, 'f', 1);
-		if (!s.reconnecting) {
-			QString st = QStringLiteral("推流中 · %1 kbps").arg(s.streamKbps, 0, 'f', 0);
-			if (s.congestion > 0.3)
-				st += QStringLiteral(" · 網路壅塞，建議調降碼率");
-			streamStatus_->setText(st);
-			streamStatus_->setStyleSheet(s.congestion > 0.3 ? QStringLiteral("color:#e0a030") : QString());
+		double kbps = 0;
+		int dropped = 0;
+		bool reconnecting = false;
+		for (const auto &t : engine_.Targets()) {
+			kbps += t.kbps;
+			dropped += t.dropped;
+			reconnecting = reconnecting || t.reconnecting;
 		}
+		liveLabel_->setText(QStringLiteral("● LIVE %1").arg(FmtTime(s.streamStartNs)));
+		liveLabel_->setProperty("state", reconnecting ? QStringLiteral("warn") : QStringLiteral("live"));
+		if (!stoppingStream_)
+			outputStatus_->setText(QStringLiteral("推流中 · 合計 %1 kbps · 網路掉格 %2%3")
+						       .arg(kbps, 0, 'f', 0)
+						       .arg(dropped)
+						       .arg(reconnecting ? QStringLiteral(" · 有目標正在自動重連")
+									 : QString()));
+		streamButton_->setText(QStringLiteral("停止推流"));
+		streamButton_->setProperty("state", QStringLiteral("on"));
+	} else {
+		liveLabel_->setText(QStringLiteral("● 未直播"));
+		liveLabel_->setProperty("state", QString());
+		streamButton_->setText(QStringLiteral("開始推流"));
+		streamButton_->setProperty("state", QString());
 	}
-	statsLabel_->setText(text);
+	if (s.recording) {
+		recLabel_->setText(QStringLiteral("● REC %1　%2 MB")
+					   .arg(FmtTime(s.recordStartNs))
+					   .arg((qulonglong)(s.recordBytes / 1048576ULL)));
+		recLabel_->setProperty("state", QStringLiteral("live"));
+		recordButton_->setText(QStringLiteral("停止錄影"));
+		recordButton_->setProperty("state", QStringLiteral("on"));
+	} else {
+		recLabel_->setText(QStringLiteral("● 未錄影"));
+		recLabel_->setProperty("state", QString());
+		recordButton_->setText(QStringLiteral("開始錄影"));
+		recordButton_->setProperty("state", QString());
+	}
+	for (QWidget *w : {static_cast<QWidget *>(liveLabel_), static_cast<QWidget *>(recLabel_),
+			   static_cast<QWidget *>(streamButton_), static_cast<QWidget *>(recordButton_)})
+		Repolish(w);
+
+	const bool busy = s.streaming || s.recording;
+	encoderBox_->setEnabled(!busy);
+	bitrateBox_->setEnabled(!busy);
+	fpsBox_->setEnabled(!busy);
+	lowLatencyBox_->setEnabled(!busy);
+	dynBitrateBox_->setEnabled(!busy);
+	targetTable_->setEnabled(!s.streaming);
+
+	statsLabel_->setText(QStringLiteral("CPU %1%　%2 fps　渲染掉格 %3　編碼掉格 %4")
+				     .arg(s.cpu, 0, 'f', 0)
+				     .arg(s.renderFps, 0, 'f', 1)
+				     .arg(s.laggedFrames)
+				     .arg(s.skippedFrames));
+	RefreshTargetStatus();
+	RefreshBusState();
+	RefreshOverlayButtons();
+}
+
+// ---------------------------------------------------------------- 存檔
+
+void MainWindow::ScheduleSave()
+{
+	saveTimer_->start();
+}
+
+void MainWindow::SaveProject()
+{
+	QSaveFile f(projectPath_);
+	if (f.open(QIODevice::WriteOnly)) {
+		f.write(QByteArray::fromStdString(engine_.SaveProjectJson()));
+		f.commit();
+	}
 }
 
 void MainWindow::LoadSettings()
 {
 	QSettings st;
-	platformBox_->setCurrentIndex(std::clamp(st.value("stream/platform", 0).toInt(), 0, platformBox_->count() - 1));
-	serverEdit_->setText(st.value("stream/server", platformBox_->currentData()).toString());
-	keyEdit_->setText(st.value("stream/key").toString());
-	int enc = encoderBox_->findData(st.value("stream/encoder").toString());
+	const int enc = encoderBox_->findData(st.value("output/encoder").toString());
 	if (enc >= 0)
 		encoderBox_->setCurrentIndex(enc);
-	bitrateBox_->setValue(st.value("stream/kbps", 6000).toInt());
-	lowLatencyBox_->setChecked(st.value("stream/lowLatency", true).toBool());
-	dynBitrateBox_->setChecked(st.value("stream/dynBitrate", false).toBool());
-	SetStreamUi(false);
+	bitrateBox_->setValue(st.value("output/kbps", 6000).toInt());
+	lowLatencyBox_->setChecked(st.value("output/lowLatency", true).toBool());
+	dynBitrateBox_->setChecked(st.value("output/dynBitrate", false).toBool());
+	// main.cpp 已依這個設定啟動視訊，這裡只同步畫面上的選項
+	appliedFpsIndex_ = std::clamp(st.value("output/fpsIndex", 3).toInt(), 0, kFpsCount - 1);
+	fpsBox_->setCurrentIndex(appliedFpsIndex_);
+	directSend_->blockSignals(true);
+	directSend_->setChecked(st.value("ui/directSend", false).toBool());
+	directSend_->blockSignals(false);
 	restoreGeometry(st.value("window/geometry").toByteArray());
 }
 
 void MainWindow::SaveSettings()
 {
 	QSettings st;
-	st.setValue("stream/platform", platformBox_->currentIndex());
-	st.setValue("stream/server", serverEdit_->text().trimmed());
-	st.setValue("stream/key", keyEdit_->text().trimmed());
-	st.setValue("stream/encoder", encoderBox_->currentData().toString());
-	st.setValue("stream/kbps", bitrateBox_->value());
-	st.setValue("stream/lowLatency", lowLatencyBox_->isChecked());
-	st.setValue("stream/dynBitrate", dynBitrateBox_->isChecked());
+	st.setValue("output/encoder", encoderBox_->currentData().toString());
+	st.setValue("output/kbps", bitrateBox_->value());
+	st.setValue("output/lowLatency", lowLatencyBox_->isChecked());
+	st.setValue("output/dynBitrate", dynBitrateBox_->isChecked());
+	st.setValue("output/fpsIndex", appliedFpsIndex_);
+	st.setValue("ui/directSend", directSend_->isChecked());
 }
 
 void MainWindow::closeEvent(QCloseEvent *event)
 {
-	if (core_.Streaming()) {
-		auto r = QMessageBox::question(this, windowTitle(), QStringLiteral("目前正在推流，確定要關閉嗎？"));
+	if (engine_.Streaming() || engine_.Recording()) {
+		const auto r = QMessageBox::question(this, windowTitle(),
+						     QStringLiteral("目前正在推流或錄影，關閉會立即停止。確定要關閉嗎？"));
 		if (r != QMessageBox::Yes) {
 			event->ignore();
 			return;
 		}
 	}
 	SaveSettings();
+	SaveProject();
 	QSettings().setValue("window/geometry", saveGeometry());
 	statsTimer_->stop();
-	preview_->DestroyDisplay();
+	saveTimer_->stop();
+	pvwDisplay_->DestroyDisplay();
+	pgmDisplay_->DestroyDisplay();
 	event->accept();
 }
 

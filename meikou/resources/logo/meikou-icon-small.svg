@@ -1,0 +1,24 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024" width="1024" height="1024">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#151B3D"/><stop offset="1" stop-color="#0A0E22"/>
+    </linearGradient>
+    <radialGradient id="glow" cx="0.5" cy="0.42" r="0.6">
+      <stop offset="0" stop-color="#3A4BFF" stop-opacity="0.38"/><stop offset="1" stop-color="#3A4BFF" stop-opacity="0"/>
+    </radialGradient>
+    <linearGradient id="mg" x1="0.12" y1="0.2" x2="0.88" y2="0.75">
+      <stop offset="0" stop-color="#38D6FF"/><stop offset="0.5" stop-color="#7A5CFF"/><stop offset="1" stop-color="#FF4F9A"/>
+    </linearGradient>
+    <linearGradient id="edge" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#FFFFFF" stop-opacity="0.22"/><stop offset="1" stop-color="#FFFFFF" stop-opacity="0.04"/>
+    </linearGradient>
+  </defs>
+  <rect x="32" y="32" width="960" height="960" rx="216" fill="url(#bg)"/>
+  <rect x="32" y="32" width="960" height="960" rx="216" fill="url(#glow)"/>
+  <rect x="34" y="34" width="956" height="956" rx="214" fill="none" stroke="url(#edge)" stroke-width="4"/>
+  <path d="M300 724 L300 300 L512 500 L724 300 L724 724" fill="none" stroke="#000" stroke-opacity="0.35" stroke-width="104" stroke-linecap="round" stroke-linejoin="round" transform="translate(0 14)"/>
+  <path d="M300 724 L300 300 L512 500 L724 300 L724 724" fill="none" stroke="url(#mg)" stroke-width="104" stroke-linecap="round" stroke-linejoin="round"/>
+  <circle cx="812" cy="244" r="74" fill="none" stroke="#FF3B4E" stroke-opacity="0.35" stroke-width="14"/>
+  <circle cx="812" cy="244" r="44" fill="#FF3B4E"/>
+  
+</svg>

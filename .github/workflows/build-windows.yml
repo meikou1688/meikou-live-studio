@@ -24,7 +24,7 @@ jobs:
       run:
         shell: pwsh
     env:
-      MEIKOU_VERSION: 2.0.0-m0.${{ github.run_number }}
+      MEIKOU_VERSION: 2.0.0-m1.${{ github.run_number }}
       MEIKOU_VIVERSION: 2.0.0.${{ github.run_number }}
 
     steps:
@@ -97,6 +97,7 @@ jobs:
           $crt = Get-ChildItem "$vsPath\VC\Redist\MSVC\*\x64\Microsoft.VC14*.CRT" -Directory | Sort-Object FullName -Descending | Select-Object -First 1
           if (-not $crt) { throw 'VC runtime not found' }
           Copy-Item "$($crt.FullName)\*.dll" "$stage\bin\64bit\" -Force
+          Copy-Item "meikou/resources/logo/logo-256.png" "$stage\bin\64bit\meikou-logo.png" -Force
           Get-ChildItem "$stage\bin\64bit\*.dll" | Where-Object Name -match 'vcruntime|msvcp|concrt' | Format-Table Name
           Compress-Archive -Path "$stage/*" -DestinationPath "out/MeikouLiveStudio-$env:MEIKOU_VERSION-portable.zip"
           choco install nsis -y --no-progress
