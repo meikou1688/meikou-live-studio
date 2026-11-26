@@ -313,5 +313,11 @@ jobs:
           - macOS（Apple Silicon M 系列晶片）：下載 *-macOS-AppleSilicon.pkg，點兩下安裝到「應用程式」。
             第一次打開若出現「無法驗證開發者」，到「系統設定 → 隱私權與安全性」按「強制打開」。
           ${summary}"
+          # 巡檢報告與截圖一起附在 Release（檔名 SelfTest-*.zip）
+          for d in selftest/selftest-*; do
+            [ -d "$d" ] || continue
+            n=$(basename "$d" | sed 's/selftest-//')
+            (cd "$d" && zip -qr "../../dist/SelfTest-${n}.zip" .)
+          done
           gh release create "v${MEIKOU_VERSION}" dist/* --prerelease \
             --title "Meikou Live Studio ${MEIKOU_VERSION}" --notes "$notes" --target "${GITHUB_SHA}"

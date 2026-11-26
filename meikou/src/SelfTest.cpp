@@ -263,8 +263,8 @@ int RunSelfTest(QApplication &app, const QString &configDir, const QString &repo
 	conv.range = VIDEO_RANGE_FULL;
 	conv.colorspace = VIDEO_CS_DEFAULT;
 	obs_add_raw_video_callback(&conv, FrameGrab::Callback, &grab);
-	rep.Check(QStringLiteral("輸出畫面持續產生"), waitFor([&] { return grab.frames > 10; }, 5000),
-		  QStringLiteral("%1 格").arg(grab.frames));
+	const bool framesOk = waitFor([&] { return grab.frames > 10; }, 5000);
+	rep.Check(QStringLiteral("輸出畫面持續產生"), framesOk, QStringLiteral("%1 格").arg(grab.frames));
 
 	// ------------------------------------------------ 訊號源
 	rep.Section(QStringLiteral("訊號源"));
@@ -307,9 +307,9 @@ int RunSelfTest(QApplication &app, const QString &configDir, const QString &repo
 	engine.ComposeOnPreview(blue); // 再疊一個子母畫面
 	rep.Check(QStringLiteral("新增場景並放入兩個訊號源"), scene && LayerCount(scene) == 2,
 		  QStringLiteral("%1 層").arg(LayerCount(scene)));
-	rep.Check(QStringLiteral("場景獨立於訊號源列表"), engine.Scenes().size() == 1 &&
-							      std::find(engine.VideoInputs().begin(), engine.VideoInputs().end(),
-									scene) == engine.VideoInputs().end());
+	const std::vector<Input *> sources = engine.VideoInputs();
+	rep.Check(QStringLiteral("場景獨立於訊號源列表"),
+		  engine.Scenes().size() == 1 && std::find(sources.begin(), sources.end(), scene) == sources.end());
 
 	EditTarget pip = engine.HitPreview(1500, 860);
 	CanvasRect r0;
