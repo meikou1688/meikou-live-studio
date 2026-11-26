@@ -178,8 +178,9 @@ void MakeShrinkable(QWidget *page)
 	for (QPushButton *b : page->findChildren<QPushButton *>()) {
 		if (b->minimumWidth() == b->maximumWidth())
 			continue; // 固定大小的按鈕不動
+		// 有空間時顯示完整文字；空間不夠才縮小（最小 56 像素）
 		QSizePolicy sp = b->sizePolicy();
-		sp.setHorizontalPolicy(QSizePolicy::Ignored);
+		sp.setHorizontalPolicy(QSizePolicy::Preferred);
 		b->setSizePolicy(sp);
 		b->setMinimumWidth(56);
 	}

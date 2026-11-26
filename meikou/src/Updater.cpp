@@ -301,7 +301,8 @@ void ShowAboutDialog(QWidget *parent)
 				  .scaled(96, 96, Qt::KeepAspectRatio, Qt::SmoothTransformation));
 	box.setTextFormat(Qt::RichText);
 	box.setText(QStringLiteral("<h3>Meikou Live Studio</h3>"
-				   "<p>版本 %1（測試版）<br>OBS 核心 %2<br>%3 %4</p>"
+				   "<p>創作者：Meikou</p>"
+				   "<p>版本 %1<br>OBS 核心 %2<br>%3 %4</p>"
 				   "<p>免費、開放原始碼（GPL-2.0-or-later）。本程式以 OBS Studio 的 libobs 為核心，"
 				   "不是 OBS 官方產品。</p>"
 				   "<p><a href=\"%5\">%5</a></p>")

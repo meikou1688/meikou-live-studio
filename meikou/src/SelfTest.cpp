@@ -1000,6 +1000,13 @@ int RunSelfTest(QApplication &app, const QString &configDir, const QString &repo
 		for (QLineEdit *e : window->findChildren<QLineEdit *>())
 			wideFields += (e->isVisible() && e->width() >= 280) ? 1 : 0;
 		window->grab().toImage().save(QDir(shotsDir).filePath(QStringLiteral("ui-targets.png")));
+		{
+			QStringList cut;
+			for (QPushButton *pb : window->findChildren<QPushButton *>())
+				if (pb->isVisible() && pb->text().startsWith(QStringLiteral("＋")) && pb->width() + 2 < pb->sizeHint().width())
+					cut << QStringLiteral("%1（%2／%3）").arg(pb->text()).arg(pb->width()).arg(pb->sizeHint().width());
+			rep.Check(QStringLiteral("按鈕文字完整顯示（＋ 新增目標等）"), cut.isEmpty(), cut.join(u'、'));
+		}
 		rep.Check(QStringLiteral("推流目標：填好的收合、沒填完的展開，欄位夠寬"), cards == 2 && summaries == 1 && wideFields >= 2,
 			  QStringLiteral("%1 張卡片、%2 個收合、%3 個寬欄位").arg(cards).arg(summaries).arg(wideFields));
 		if (firstSummary) {
