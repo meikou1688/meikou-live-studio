@@ -43,6 +43,7 @@ target_sources(
     src/SelfTest.hpp
     src/FlowLayout.cpp
     src/FlowLayout.hpp
+    src/MediaControl.hpp
     src/NetMedia.cpp
     src/NetMedia.hpp
     src/Updater.cpp

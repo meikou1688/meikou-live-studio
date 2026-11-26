@@ -1,5 +1,6 @@
 #include "MainWindow.hpp"
 #include "FlowLayout.hpp"
+#include "MediaControl.hpp"
 #include "NetMedia.hpp"
 
 #include "AudioMixer.hpp"
@@ -1030,11 +1031,11 @@ void MainWindow::RebuildRows()
 				return mb;
 			};
 			QPushButton *pp = mk(QStringLiteral("pause"), QStringLiteral("暫停／繼續播放"),
-					     [](obs_source_t *s) { MediaTogglePlay(s); });
+					     [this](obs_source_t *s) { MediaTogglePlay(this, s); });
 			pp->setProperty("media", Q(uid));
 			pp->setObjectName(QStringLiteral("mediaPlay"));
 			mk(QStringLiteral("stop"), QStringLiteral("停止"), [](obs_source_t *s) { obs_source_media_stop(s); });
-			mk(QStringLiteral("restart"), QStringLiteral("從頭重播"), [](obs_source_t *s) { obs_source_media_restart(s); });
+			mk(QStringLiteral("restart"), QStringLiteral("從頭重播"), [this](obs_source_t *s) { MediaPlayFromStart(this, s); });
 			auto *time = new QLabel;
 			time->setObjectName(QStringLiteral("mediaTime"));
 			time->setProperty("media", Q(uid));

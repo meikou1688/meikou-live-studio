@@ -16,22 +16,6 @@
 
 namespace meikou {
 
-// 播放鍵：播放中→暫停；暫停中→繼續；停止或播完→從頭播放
-inline void MediaTogglePlay(obs_source_t *s)
-{
-	switch (obs_source_media_get_state(s)) {
-	case OBS_MEDIA_STATE_PLAYING:
-		obs_source_media_play_pause(s, true);
-		break;
-	case OBS_MEDIA_STATE_PAUSED:
-		obs_source_media_play_pause(s, false);
-		break;
-	default:
-		obs_source_media_restart(s);
-		break;
-	}
-}
-
 
 struct Choice {
 	std::string id;

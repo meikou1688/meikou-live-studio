@@ -3,6 +3,7 @@
 #include "SelfTest.hpp"
 #include "Updater.hpp"
 #include "NetMedia.hpp"
+#include "MediaControl.hpp"
 
 #include "Engine.hpp"
 #include "GraphicSource.hpp"
@@ -1103,17 +1104,17 @@ int RunSelfTest(QApplication &app, const QString &configDir, const QString &repo
 				obs_source_media_stop(src);
 				rep.Check(QStringLiteral("停止"),
 					  waitFor([&] { return obs_source_media_get_state(src) == OBS_MEDIA_STATE_STOPPED; }, 3000));
-				MediaTogglePlay(src); // 停止後按「播放」要從頭播
+				MediaTogglePlay(&app, src); // 停止後馬上按「播放」要從頭播（含 OBS 停止較慢時的補送）
 				rep.Check(QStringLiteral("停止後按播放會從頭播放"),
 					  waitFor([&] { return obs_source_media_get_state(src) == OBS_MEDIA_STATE_PLAYING; }, 5000));
-				MediaTogglePlay(src); // 再按一次＝暫停
+				MediaTogglePlay(&app, src); // 再按一次＝暫停
 				rep.Check(QStringLiteral("播放中按播放鍵＝暫停"),
 					  waitFor([&] { return obs_source_media_get_state(src) == OBS_MEDIA_STATE_PAUSED; }, 3000));
-				MediaTogglePlay(src); // 再按一次＝繼續
+				MediaTogglePlay(&app, src); // 再按一次＝繼續
 				waitFor([&] { return obs_source_media_get_state(src) == OBS_MEDIA_STATE_PLAYING; }, 3000);
 				obs_source_media_stop(src);
 				waitFor([&] { return obs_source_media_get_state(src) == OBS_MEDIA_STATE_STOPPED; }, 3000);
-				obs_source_media_restart(src);
+				MediaPlayFromStart(&app, src);
 				rep.Check(QStringLiteral("重播"),
 					  waitFor([&] { return obs_source_media_get_state(src) == OBS_MEDIA_STATE_PLAYING; }, 5000));
 				engine.Cut(); // 撤回，播出換回原本的場景
