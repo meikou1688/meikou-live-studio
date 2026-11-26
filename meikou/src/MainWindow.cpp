@@ -272,10 +272,11 @@ QWidget *MainWindow::BuildSwitcher()
 
 	auto *pvwBox = new QVBoxLayout;
 	auto *pvwTitle = new QLabel(
-		QStringLiteral("預覽 PVW　<span style='color:#8a90a0'>拖曳疊加調整位置、滾輪縮放</span>"));
+		QStringLiteral("預覽 PVW　<span style='color:#8a90a0'>點選後拖曳移動、拖四個角縮放、右鍵更多選項</span>"));
 	pvwTitle->setObjectName(QStringLiteral("pvwTitle"));
 	pvwDisplay_ = new Display(engine_, Display::Mode::Preview);
 	pvwDisplay_->onOverlayChanged = [this] { ScheduleSave(); };
+	pvwDisplay_->onLayersChanged = [this] { ScheduleSave(); };
 	auto *pvwFrame = new QFrame;
 	pvwFrame->setObjectName(QStringLiteral("pvwFrame"));
 	auto *pf = new QVBoxLayout(pvwFrame);
@@ -338,7 +339,7 @@ QWidget *MainWindow::BuildSwitcher()
 	v->addLayout(monitors, 1);
 
 	// 訊號源切換列
-	auto *busGroup = new QGroupBox(QStringLiteral("訊號源　（數字鍵 1–9 放到預覽）"));
+	auto *busGroup = new QGroupBox(QStringLiteral("訊號源　（數字鍵 1–9 放到預覽；Shift＋點選或 Shift＋數字＝疊加到預覽畫面）"));
 	auto *busOuter = new QHBoxLayout(busGroup);
 	auto *busScroll = new QScrollArea;
 	busScroll->setWidgetResizable(true);
@@ -379,7 +380,32 @@ QWidget *MainWindow::BuildSwitcher()
 		connect(a, &QAction::triggered, this, [this, kind] { AddSourceOfType(kind); });
 	}
 	addSrc->setMenu(menu);
-	busOuter->addWidget(addSrc);
+
+	// 疊加到預覽：把訊號源疊在目前的預覽畫面上（子母畫面、並排），可在預覽裡拖曳縮放
+	auto *compose = new QPushButton(QStringLiteral("⧉ 疊加到預覽"));
+	compose->setToolTip(QStringLiteral("把訊號源疊在目前預覽畫面上，做成子母畫面或並排；在預覽裡拖曳移動、拖角落縮放"));
+	auto *composeMenu = new QMenu(compose);
+	connect(composeMenu, &QMenu::aboutToShow, this, [this, composeMenu] {
+		composeMenu->clear();
+		bool any = false;
+		for (Input *in : engine_.VideoInputs()) {
+			if (in->isScene)
+				continue;
+			const std::string uid = in->uid;
+			QAction *a = composeMenu->addAction(Q(in->name));
+			connect(a, &QAction::triggered, this, [this, uid] { ComposeSource(uid); });
+			any = true;
+		}
+		if (!any)
+			composeMenu->addAction(QStringLiteral("（先新增影像訊號源）"))->setEnabled(false);
+	});
+	compose->setMenu(composeMenu);
+
+	auto *btnCol = new QVBoxLayout;
+	btnCol->setSpacing(6);
+	btnCol->addWidget(addSrc);
+	btnCol->addWidget(compose);
+	busOuter->addLayout(btnCol);
 	v->addWidget(busGroup);
 
 	// 疊加列
@@ -585,6 +611,16 @@ void MainWindow::SetupShortcuts()
 			}
 		});
 	}
+	for (int i = 0; i < 9; i++) {
+		auto *sc = new QShortcut(QKeySequence(Qt::SHIFT | (Qt::Key_1 + i)), this);
+		connect(sc, &QShortcut::activated, this, [this, i] {
+			if (TypingFocus())
+				return;
+			auto vids = engine_.VideoInputs();
+			if (i < (int)vids.size())
+				ComposeSource(vids[i]->uid);
+		});
+	}
 	auto onKey = [this](int key, void (MainWindow::*fn)()) {
 		auto *sc = new QShortcut(QKeySequence(key), this);
 		connect(sc, &QShortcut::activated, this, [this, fn] {
@@ -620,8 +656,10 @@ void MainWindow::RebuildBus()
 	int n = 0;
 	for (Input *in : engine_.VideoInputs()) {
 		n++;
-		auto *b = new QPushButton(
-			QStringLiteral("%1\n%2").arg(n <= 9 ? QString::number(n) : QString(), Q(in->name)));
+		const QString label = in->isScene ? QStringLiteral("▦ ") + Q(in->name) : Q(in->name);
+		auto *b = new QPushButton(QStringLiteral("%1\n%2").arg(n <= 9 ? QString::number(n) : QString(), label));
+		b->setToolTip(in->isScene ? QStringLiteral("畫面組合：放到預覽後可以拖曳、縮放裡面的每一層")
+					  : QStringLiteral("點一下放到預覽；Shift＋點一下疊加到預覽畫面"));
 		b->setObjectName(QStringLiteral("busButton"));
 		b->setProperty("uid", Q(in->uid));
 		b->setMinimumSize(128, 62);
@@ -630,18 +668,29 @@ void MainWindow::RebuildBus()
 		b->setContextMenuPolicy(Qt::CustomContextMenu);
 		const std::string uid = in->uid;
 		connect(b, &QPushButton::clicked, this, [this, uid] {
+			if (QApplication::keyboardModifiers() & Qt::ShiftModifier) {
+				ComposeSource(uid);
+				return;
+			}
 			engine_.SetPreview(engine_.FindInput(uid));
 			RefreshBusState();
 		});
 		connect(b, &QPushButton::customContextMenuRequested, this, [this, b, uid](const QPoint &pos) {
 			QMenu m;
-			QAction *props = m.addAction(QStringLiteral("設定…"));
+			Input *cur = engine_.FindInput(uid);
+			const bool isScene = cur && cur->isScene;
+			QAction *compose = isScene ? nullptr : m.addAction(QStringLiteral("疊加到預覽畫面（子母畫面）"));
+			QAction *props = isScene ? nullptr : m.addAction(QStringLiteral("設定…"));
 			QAction *rename = m.addAction(QStringLiteral("重新命名…"));
 			m.addSeparator();
 			QAction *remove = m.addAction(QStringLiteral("移除"));
 			QAction *chosen = m.exec(b->mapToGlobal(pos));
 			// 選單關閉後才處理，避免在按鈕自己的事件裡把按鈕刪掉
-			if (chosen == props)
+			if (!chosen)
+				return;
+			if (chosen == compose)
+				QTimer::singleShot(0, this, [this, uid] { ComposeSource(uid); });
+			else if (chosen == props)
 				QTimer::singleShot(0, this, [this, uid] { EditSource(uid); });
 			else if (chosen == rename)
 				QTimer::singleShot(0, this, [this, uid] { RenameSource(uid); });
@@ -682,8 +731,10 @@ void MainWindow::RebuildSourceList()
 {
 	sourceList_->clear();
 	for (const auto &in : engine_.Inputs()) {
-		auto *it = new QListWidgetItem((in->audioOnly ? QStringLiteral("🔊  ") : QStringLiteral("🎥  ")) +
-					       Q(in->name));
+		const QString icon = in->isScene     ? QStringLiteral("▦  ")
+				     : in->audioOnly ? QStringLiteral("🔊  ")
+						     : QStringLiteral("🎥  ");
+		auto *it = new QListWidgetItem(icon + Q(in->name));
 		it->setData(Qt::UserRole, Q(in->uid));
 		sourceList_->addItem(it);
 	}
@@ -840,12 +891,32 @@ void MainWindow::AddSourceOfType(const QString &kind)
 void MainWindow::EditSource(const std::string &uid)
 {
 	Input *in = engine_.FindInput(uid);
-	if (!in || !in->source)
+	if (!in || !in->source || in->isScene)
 		return;
 	PropertiesDialog dlg(in->source, QStringLiteral("設定：%1").arg(Q(in->name)), this);
 	dlg.exec();
 	// 設定改變可能讓「只有聲音」的狀態或音軌變化，重建一次比較穩
 	SourcesChanged();
+}
+
+void MainWindow::ComposeSource(const std::string &uid)
+{
+	Input *src = engine_.FindInput(uid);
+	if (!src || src->audioOnly || src->isScene)
+		return;
+	Input *before = engine_.Preview();
+	const size_t countBefore = engine_.Inputs().size();
+	Input *scene = engine_.ComposeOnPreview(src);
+	if (!scene)
+		return;
+	if (engine_.Inputs().size() != countBefore || before != scene)
+		RebuildBus(); // 自動建立了新的畫面組合
+	RebuildSourceList();
+	RefreshBusState();
+	ScheduleSave();
+	if (outputStatus_)
+		outputStatus_->setText(QStringLiteral("已把「%1」疊到「%2」。在預覽裡拖曳移動、拖四個角縮放，右鍵可調整圖層順序。")
+					       .arg(Q(src->name), Q(scene->name)));
 }
 
 void MainWindow::RenameSource(const std::string &uid)

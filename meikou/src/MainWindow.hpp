@@ -50,6 +50,7 @@ private:
 	void AddSourceOfType(const QString &kind);
 	void EditSource(const std::string &uid);
 	void RenameSource(const std::string &uid);
+	void ComposeSource(const std::string &uid);
 	void RemoveSource(const std::string &uid);
 	void AddOverlayOfKind(const QString &kind);
 	void EditOverlay(const std::string &uid);

@@ -2,12 +2,14 @@
 
 #include "Engine.hpp"
 
+#include <QMenu>
 #include <QMouseEvent>
 #include <QResizeEvent>
 #include <QShowEvent>
 #include <QWheelEvent>
 
 #include <algorithm>
+#include <cmath>
 
 namespace meikou {
 
@@ -19,7 +21,7 @@ Display::Display(Engine &engine, Mode mode, QWidget *parent) : QWidget(parent), 
 	setAttribute(Qt::WA_OpaquePaintEvent);
 	setAttribute(Qt::WA_DontCreateNativeAncestors);
 	setMinimumSize(320, 180);
-	setMouseTracking(false);
+	setMouseTracking(mode == Mode::Preview);
 	setFocusPolicy(Qt::NoFocus);
 }
 
@@ -97,35 +99,92 @@ bool Display::ToCanvas(const QPointF &p, float &x, float &y) const
 	return x >= 0 && y >= 0 && x <= cw && y <= ch;
 }
 
+float Display::CanvasPerPixel() const
+{
+	const float scale = std::min((float)width() / 1920.0f, (float)height() / 1080.0f);
+	return scale > 0.0f ? 1.0f / scale : 1.0f;
+}
+
+int Display::HitHandle(float x, float y) const
+{
+	const EditTarget sel = engine_.Selection();
+	CanvasRect r;
+	if (!sel.Valid() || !engine_.TargetRect(sel, r))
+		return -1;
+	const float tol = 9.0f * CanvasPerPixel();
+	const float cx[4] = {r.x0, r.x1, r.x1, r.x0};
+	const float cy[4] = {r.y0, r.y0, r.y1, r.y1};
+	for (int i = 0; i < 4; i++)
+		if (std::fabs(x - cx[i]) <= tol && std::fabs(y - cy[i]) <= tol)
+			return i;
+	return -1;
+}
+
 void Display::mousePressEvent(QMouseEvent *event)
 {
-	if (mode_ != Mode::Preview || event->button() != Qt::LeftButton)
+	if (mode_ != Mode::Preview)
 		return;
 	float x, y;
 	ToCanvas(event->position(), x, y);
-	Overlay *ov = engine_.HitOverlay(x, y);
-	dragUid_ = ov ? ov->uid : std::string();
-	engine_.SetSelectedOverlay(dragUid_);
+
+	if (event->button() == Qt::RightButton) {
+		EditTarget t = engine_.HitPreview(x, y);
+		engine_.SetSelection(t);
+		if (t.Valid())
+			ShowContextMenu(event->globalPosition().toPoint(), t);
+		return;
+	}
+	if (event->button() != Qt::LeftButton)
+		return;
+
 	lastX_ = x;
 	lastY_ = y;
+	dragged_ = false;
+	dragCorner_ = HitHandle(x, y);
+	if (dragCorner_ >= 0) {
+		drag_ = engine_.Selection();
+		return;
+	}
+	EditTarget t = engine_.HitPreview(x, y);
+	engine_.SetSelection(t);
+	// 填滿整個畫面的圖層只選取、不拖動，避免不小心把主畫面拖歪；要縮小請拖角落
+	drag_ = (t.Valid() && !engine_.IsLocked(t)) ? t : EditTarget();
 }
 
 void Display::mouseMoveEvent(QMouseEvent *event)
 {
-	if (dragUid_.empty())
-		return;
 	float x, y;
 	ToCanvas(event->position(), x, y);
-	engine_.MoveOverlay(engine_.FindOverlay(dragUid_), x - lastX_, y - lastY_);
+	if (!drag_.Valid()) {
+		if (mode_ == Mode::Preview && !(event->buttons() & Qt::LeftButton)) {
+			const int corner = HitHandle(x, y);
+			if (corner == 0 || corner == 2)
+				setCursor(Qt::SizeFDiagCursor);
+			else if (corner == 1 || corner == 3)
+				setCursor(Qt::SizeBDiagCursor);
+			else {
+				EditTarget t = engine_.HitPreview(x, y);
+				setCursor(t.Valid() && !engine_.IsLocked(t) ? Qt::SizeAllCursor : Qt::ArrowCursor);
+			}
+		}
+		return;
+	}
+	if (dragCorner_ >= 0)
+		engine_.ResizeTarget(drag_, dragCorner_, x, y);
+	else
+		engine_.MoveTarget(drag_, x - lastX_, y - lastY_);
+	dragged_ = true;
 	lastX_ = x;
 	lastY_ = y;
 }
 
 void Display::mouseReleaseEvent(QMouseEvent *)
 {
-	if (!dragUid_.empty() && onOverlayChanged)
+	if (drag_.Valid() && dragged_ && onOverlayChanged)
 		onOverlayChanged();
-	dragUid_.clear();
+	drag_ = EditTarget();
+	dragCorner_ = -1;
+	dragged_ = false;
 }
 
 void Display::wheelEvent(QWheelEvent *event)
@@ -134,14 +193,58 @@ void Display::wheelEvent(QWheelEvent *event)
 		return;
 	float x, y;
 	ToCanvas(event->position(), x, y);
-	Overlay *ov = engine_.HitOverlay(x, y);
-	if (!ov)
+	EditTarget t = engine_.HitPreview(x, y);
+	if (!t.Valid())
 		return;
-	engine_.SetSelectedOverlay(ov->uid);
-	engine_.ScaleOverlay(ov, event->angleDelta().y() > 0 ? 1.05f : 1.0f / 1.05f);
+	engine_.SetSelection(t);
+	engine_.ScaleTarget(t, event->angleDelta().y() > 0 ? 1.05f : 1.0f / 1.05f);
 	if (onOverlayChanged)
 		onOverlayChanged();
 	event->accept();
+}
+
+void Display::ShowContextMenu(const QPoint &globalPos, const EditTarget &t)
+{
+	QMenu menu(this);
+	const QString name = QString::fromUtf8(engine_.TargetName(t).c_str());
+	menu.addSection(name.isEmpty() ? QStringLiteral("圖層") : name);
+	QAction *fill = nullptr, *top = nullptr, *up = nullptr, *down = nullptr, *bottom = nullptr, *remove = nullptr,
+		*reset = nullptr;
+	if (t.layerId) {
+		fill = menu.addAction(QStringLiteral("填滿畫面"));
+		menu.addSeparator();
+		top = menu.addAction(QStringLiteral("移到最上層"));
+		up = menu.addAction(QStringLiteral("上移一層"));
+		down = menu.addAction(QStringLiteral("下移一層"));
+		bottom = menu.addAction(QStringLiteral("移到最下層"));
+		Input *pvw = engine_.Preview();
+		if (pvw && pvw->isScene) {
+			menu.addSeparator();
+			remove = menu.addAction(QStringLiteral("從這個畫面移除"));
+		}
+	} else {
+		reset = menu.addAction(QStringLiteral("重設位置與大小"));
+	}
+	QAction *chosen = menu.exec(globalPos);
+	if (!chosen)
+		return;
+	if (chosen == fill || chosen == reset)
+		engine_.LayerFill(t);
+	else if (chosen == top)
+		engine_.LayerOrder(t, OBS_ORDER_MOVE_TOP);
+	else if (chosen == up)
+		engine_.LayerOrder(t, OBS_ORDER_MOVE_UP);
+	else if (chosen == down)
+		engine_.LayerOrder(t, OBS_ORDER_MOVE_DOWN);
+	else if (chosen == bottom)
+		engine_.LayerOrder(t, OBS_ORDER_MOVE_BOTTOM);
+	else if (chosen == remove) {
+		engine_.LayerRemove(t);
+		if (onLayersChanged)
+			onLayersChanged();
+	}
+	if (onOverlayChanged)
+		onOverlayChanged();
 }
 
 void Display::Draw(void *param, uint32_t cx, uint32_t cy)
@@ -164,7 +267,7 @@ void Display::Draw(void *param, uint32_t cx, uint32_t cy)
 	if (self->mode_ == Mode::Program)
 		obs_render_main_texture();
 	else
-		self->engine_.RenderPreview();
+		self->engine_.RenderPreview(10.0f / scale); // 控制點約 10 個實際像素
 	gs_projection_pop();
 	gs_viewport_pop();
 }

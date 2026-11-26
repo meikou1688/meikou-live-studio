@@ -7,6 +7,7 @@
 #include <graphics/vec4.h>
 
 #include <algorithm>
+#include <cmath>
 #include <chrono>
 #include <cstring>
 #include <ctime>
@@ -190,6 +191,53 @@ void FitToCanvas(obs_sceneitem_t *item)
 	obs_sceneitem_set_pos(item, &pos);
 }
 
+// 把圖層放在指定的方框裡（等比例縮放、置中），以左上角為基準
+void SetLayerBox(obs_sceneitem_t *item, float x, float y, float w, float h)
+{
+	struct vec2 bounds, pos, one;
+	vec2_set(&bounds, std::max(w, 8.0f), std::max(h, 8.0f));
+	vec2_set(&pos, x, y);
+	vec2_set(&one, 1.0f, 1.0f);
+	obs_sceneitem_set_alignment(item, OBS_ALIGN_LEFT | OBS_ALIGN_TOP);
+	obs_sceneitem_set_bounds_type(item, OBS_BOUNDS_SCALE_INNER);
+	obs_sceneitem_set_bounds_alignment(item, OBS_ALIGN_CENTER);
+	obs_sceneitem_set_scale(item, &one);
+	obs_sceneitem_set_bounds(item, &bounds);
+	obs_sceneitem_set_pos(item, &pos);
+}
+
+CanvasRect ItemRect(obs_sceneitem_t *item)
+{
+	struct matrix4 box;
+	obs_sceneitem_get_box_transform(item, &box);
+	struct vec3 a, b;
+	vec3_set(&a, 0.0f, 0.0f, 0.0f);
+	vec3_set(&b, 1.0f, 1.0f, 0.0f);
+	vec3_transform(&a, &a, &box);
+	vec3_transform(&b, &b, &box);
+	CanvasRect r;
+	r.x0 = std::min(a.x, b.x);
+	r.x1 = std::max(a.x, b.x);
+	r.y0 = std::min(a.y, b.y);
+	r.y1 = std::max(a.y, b.y);
+	return r;
+}
+
+std::vector<obs_sceneitem_t *> SceneItems(obs_scene_t *scene)
+{
+	std::vector<obs_sceneitem_t *> list; // 由下到上
+	if (!scene)
+		return list;
+	obs_scene_enum_items(
+		scene,
+		[](obs_scene_t *, obs_sceneitem_t *item, void *param) {
+			static_cast<std::vector<obs_sceneitem_t *> *>(param)->push_back(item);
+			return true;
+		},
+		&list);
+	return list;
+}
+
 std::string ClockText(const std::string &prefix)
 {
 	std::time_t t = std::time(nullptr);
@@ -335,7 +383,7 @@ void Engine::Shutdown()
 	{
 		std::lock_guard<std::mutex> lock(previewMutex_);
 		pvw_ = nullptr;
-		selectedOverlay_.clear();
+		selection_ = EditTarget();
 	}
 	pgm_ = nullptr;
 
@@ -466,6 +514,10 @@ void Engine::RemoveInput(const std::string &uid)
 
 	if (pvw_ == in)
 		SetPreview(nullptr);
+	{
+		std::lock_guard<std::mutex> lock(previewMutex_);
+		selection_.layerId = 0;
+	}
 	if (pgm_ == in) {
 		obs_transition_set(transition_, obs_scene_get_source(black_));
 		pgm_ = nullptr;
@@ -508,7 +560,75 @@ std::vector<Input *> Engine::VideoInputs() const
 
 bool Engine::HasAudio(const Input *in) const
 {
-	return in && in->source && (obs_source_get_output_flags(in->source) & OBS_SOURCE_AUDIO);
+	return in && in->source && !in->isScene && (obs_source_get_output_flags(in->source) & OBS_SOURCE_AUDIO);
+}
+
+// ---------------------------------------------------------------- 畫面組合
+
+Input *Engine::CreateScene(const std::string &name, const std::string &uid)
+{
+	auto in = std::make_unique<Input>();
+	in->uid = uid.empty() ? NewUid("scene") : uid;
+	in->name = name;
+	in->typeId = "scene";
+	in->isScene = true;
+	in->wrap = obs_scene_create_private(("SC:" + in->uid).c_str());
+	if (!in->wrap)
+		return nullptr;
+	in->source = obs_source_get_ref(obs_scene_get_source(in->wrap));
+	Input *raw = in.get();
+	inputs_.push_back(std::move(in));
+	return raw;
+}
+
+std::string Engine::NextSceneName() const
+{
+	int n = 1;
+	for (const auto &in : inputs_)
+		if (in->isScene)
+			n++;
+	return "畫面組合 " + std::to_string(n);
+}
+
+obs_sceneitem_t *Engine::AddLayer(Input *scene, Input *src, bool fullscreen)
+{
+	if (!scene || !scene->wrap || !src || !src->source || src->audioOnly || src->isScene || src == scene)
+		return nullptr;
+	obs_sceneitem_t *item = obs_scene_add(scene->wrap, src->source);
+	if (!item)
+		return nullptr;
+	if (fullscreen) {
+		SetLayerBox(item, 0, 0, 1920, 1080);
+	} else {
+		// 子母畫面：右下角 1/3 大小，每多一層往左上錯開，避免完全重疊
+		int count = (int)SceneItems(scene->wrap).size() - 2;
+		float off = 40.0f * (float)std::max(0, count);
+		SetLayerBox(item, 1920 - 640 - 40 - off, 1080 - 360 - 40 - off, 640, 360);
+	}
+	return item;
+}
+
+Input *Engine::ComposeOnPreview(Input *src)
+{
+	if (!src || src->audioOnly || src->isScene)
+		return nullptr;
+	Input *scene = pvw_;
+	if (!scene || !scene->isScene) {
+		Input *base = pvw_;
+		scene = CreateScene(NextSceneName());
+		if (!scene)
+			return nullptr;
+		if (base && base != src)
+			AddLayer(scene, base, true);
+		obs_sceneitem_t *item = AddLayer(scene, src, base == nullptr || base == src);
+		SetPreview(scene);
+		if (item)
+			SetSelection({std::string(), obs_sceneitem_get_id(item)});
+		return scene;
+	}
+	if (obs_sceneitem_t *item = AddLayer(scene, src, false))
+		SetSelection({std::string(), obs_sceneitem_get_id(item)});
+	return scene;
 }
 
 // ---------------------------------------------------------------- 切換
@@ -522,6 +642,8 @@ void Engine::SetPreview(Input *in)
 		std::lock_guard<std::mutex> lock(previewMutex_);
 		old = pvw_;
 		pvw_ = in;
+		if (old != in)
+			selection_.layerId = 0;
 	}
 	if (old == in)
 		return;
@@ -602,22 +724,28 @@ bool Engine::SetTransitionType(const std::string &typeId)
 	return true;
 }
 
-void Engine::RenderPreview()
+void Engine::RenderPreview(float handleSize)
 {
 	obs_source_t *src = nullptr;
 	bool haveBox = false;
 	struct matrix4 box;
+	CanvasRect rect;
 	{
 		std::lock_guard<std::mutex> lock(previewMutex_);
 		if (pvw_ && pvw_->wrap)
 			src = obs_source_get_ref(obs_scene_get_source(pvw_->wrap));
-		if (!selectedOverlay_.empty()) {
-			for (auto &ov : overlays_) {
-				if (ov->uid == selectedOverlay_ && ov->state == OverlayState::Preview) {
-					obs_sceneitem_get_box_transform(ov->pvwItem, &box);
-					haveBox = true;
-				}
-			}
+		obs_sceneitem_t *sel = nullptr;
+		if (!selection_.overlayUid.empty()) {
+			for (auto &ov : overlays_)
+				if (ov->uid == selection_.overlayUid && ov->state == OverlayState::Preview)
+					sel = ov->pvwItem;
+		} else if (selection_.layerId && pvw_ && pvw_->wrap) {
+			sel = obs_scene_find_sceneitem_by_id(pvw_->wrap, selection_.layerId);
+		}
+		if (sel) {
+			obs_sceneitem_get_box_transform(sel, &box);
+			rect = ItemRect(sel);
+			haveBox = true;
 		}
 	}
 	if (src) {
@@ -632,11 +760,12 @@ void Engine::RenderPreview()
 	gs_effect_t *solid = obs_get_base_effect(OBS_EFFECT_SOLID);
 	gs_eparam_t *color = gs_effect_get_param_by_name(solid, "color");
 	struct vec4 c;
-	vec4_set(&c, 0.24f, 0.86f, 0.45f, 1.0f);
+	vec4_set(&c, 0.0f, 0.9f, 0.75f, 1.0f);
 	gs_effect_set_vec4(color, &c);
-	gs_matrix_push();
-	gs_matrix_mul(&box);
 	while (gs_effect_loop(solid, "Solid")) {
+		// 外框
+		gs_matrix_push();
+		gs_matrix_mul(&box);
 		gs_render_start(true);
 		gs_vertex2f(0.0f, 0.0f);
 		gs_vertex2f(1.0f, 0.0f);
@@ -644,8 +773,205 @@ void Engine::RenderPreview()
 		gs_vertex2f(0.0f, 1.0f);
 		gs_vertex2f(0.0f, 0.0f);
 		gs_render_stop(GS_LINESTRIP);
+		gs_matrix_pop();
+
+		// 四個角的縮放控制點
+		const float h = handleSize * 0.5f;
+		const float cx[4] = {rect.x0, rect.x1, rect.x1, rect.x0};
+		const float cy[4] = {rect.y0, rect.y0, rect.y1, rect.y1};
+		for (int i = 0; i < 4; i++) {
+			gs_render_start(true);
+			gs_vertex2f(cx[i] - h, cy[i] - h);
+			gs_vertex2f(cx[i] + h, cy[i] - h);
+			gs_vertex2f(cx[i] - h, cy[i] + h);
+			gs_vertex2f(cx[i] + h, cy[i] + h);
+			gs_render_stop(GS_TRISTRIP);
+		}
 	}
-	gs_matrix_pop();
+}
+
+// ---------------------------------------------------------------- 預覽編輯
+
+std::vector<obs_sceneitem_t *> Engine::TargetItems(const EditTarget &t)
+{
+	std::vector<obs_sceneitem_t *> items;
+	if (!t.overlayUid.empty()) {
+		if (Overlay *ov = FindOverlay(t.overlayUid)) {
+			items.push_back(ov->pvwItem);
+			items.push_back(ov->pgmItem);
+		}
+	} else if (t.layerId && pvw_ && pvw_->wrap) {
+		if (obs_sceneitem_t *item = obs_scene_find_sceneitem_by_id(pvw_->wrap, t.layerId))
+			items.push_back(item);
+	}
+	return items;
+}
+
+EditTarget Engine::HitPreview(float x, float y)
+{
+	auto inside = [x, y](const CanvasRect &r) { return x >= r.x0 && x <= r.x1 && y >= r.y0 && y <= r.y1; };
+	for (auto it = overlays_.rbegin(); it != overlays_.rend(); ++it) {
+		Overlay *ov = it->get();
+		if (ov->state == OverlayState::Preview && inside(ItemRect(ov->pvwItem)))
+			return {ov->uid, 0};
+	}
+	if (pvw_ && pvw_->wrap) {
+		auto items = SceneItems(pvw_->wrap);
+		for (auto it = items.rbegin(); it != items.rend(); ++it) {
+			if (obs_sceneitem_visible(*it) && inside(ItemRect(*it)))
+				return {std::string(), obs_sceneitem_get_id(*it)};
+		}
+	}
+	return {};
+}
+
+bool Engine::TargetRect(const EditTarget &t, CanvasRect &r)
+{
+	auto items = TargetItems(t);
+	if (items.empty() || !items[0])
+		return false;
+	r = ItemRect(items[0]);
+	return true;
+}
+
+bool Engine::IsLocked(const EditTarget &t)
+{
+	if (t.layerId == 0)
+		return false;
+	CanvasRect r;
+	if (!TargetRect(t, r))
+		return true;
+	return r.x0 <= 1.0f && r.y0 <= 1.0f && r.x1 >= 1919.0f && r.y1 >= 1079.0f;
+}
+
+void Engine::MoveTarget(const EditTarget &t, float dx, float dy)
+{
+	for (obs_sceneitem_t *item : TargetItems(t)) {
+		struct vec2 pos;
+		obs_sceneitem_get_pos(item, &pos);
+		pos.x += dx;
+		pos.y += dy;
+		obs_sceneitem_set_pos(item, &pos);
+	}
+}
+
+namespace {
+void ScaleItem(obs_sceneitem_t *item, float factor)
+{
+	if (obs_sceneitem_get_bounds_type(item) != OBS_BOUNDS_NONE) {
+		struct vec2 b;
+		obs_sceneitem_get_bounds(item, &b);
+		vec2_set(&b, std::max(8.0f, b.x * factor), std::max(8.0f, b.y * factor));
+		obs_sceneitem_set_bounds(item, &b);
+	} else {
+		struct vec2 sc;
+		obs_sceneitem_get_scale(item, &sc);
+		vec2_set(&sc, std::clamp(sc.x * factor, 0.02f, 20.0f), std::clamp(sc.y * factor, 0.02f, 20.0f));
+		obs_sceneitem_set_scale(item, &sc);
+	}
+}
+
+void CornerOf(const CanvasRect &r, int corner, float &x, float &y)
+{
+	x = (corner == 0 || corner == 3) ? r.x0 : r.x1;
+	y = (corner == 0 || corner == 1) ? r.y0 : r.y1;
+}
+} // namespace
+
+void Engine::ResizeTarget(const EditTarget &t, int corner, float mx, float my)
+{
+	auto items = TargetItems(t);
+	if (items.empty() || !items[0])
+		return;
+	const CanvasRect r = ItemRect(items[0]);
+	const float w = r.x1 - r.x0, h = r.y1 - r.y0;
+	if (w < 1.0f || h < 1.0f)
+		return;
+	// 對角固定不動，等比例縮放
+	const int anchor = (corner + 2) % 4;
+	float ax, ay;
+	CornerOf(r, anchor, ax, ay);
+	float factor = std::max(std::fabs(mx - ax) / w, std::fabs(my - ay) / h);
+	factor = std::clamp(factor, 24.0f / std::min(w, h), 8000.0f / std::max(w, h));
+	for (obs_sceneitem_t *item : items)
+		ScaleItem(item, factor);
+	float nx, ny;
+	CornerOf(ItemRect(items[0]), anchor, nx, ny);
+	MoveTarget(t, ax - nx, ay - ny);
+}
+
+void Engine::ScaleTarget(const EditTarget &t, float factor)
+{
+	auto items = TargetItems(t);
+	if (items.empty() || !items[0])
+		return;
+	// 以中心為基準縮放
+	const CanvasRect r = ItemRect(items[0]);
+	const float cx = (r.x0 + r.x1) * 0.5f, cy = (r.y0 + r.y1) * 0.5f;
+	for (obs_sceneitem_t *item : items)
+		ScaleItem(item, factor);
+	const CanvasRect n = ItemRect(items[0]);
+	MoveTarget(t, cx - (n.x0 + n.x1) * 0.5f, cy - (n.y0 + n.y1) * 0.5f);
+}
+
+void Engine::SetSelection(const EditTarget &t)
+{
+	std::lock_guard<std::mutex> lock(previewMutex_);
+	selection_ = t;
+}
+
+EditTarget Engine::Selection() const
+{
+	std::lock_guard<std::mutex> lock(previewMutex_);
+	return selection_;
+}
+
+std::string Engine::TargetName(const EditTarget &t)
+{
+	if (!t.overlayUid.empty()) {
+		Overlay *ov = FindOverlay(t.overlayUid);
+		return ov ? ov->name : std::string();
+	}
+	auto items = TargetItems(t);
+	if (items.empty())
+		return std::string();
+	obs_source_t *src = obs_sceneitem_get_source(items[0]);
+	for (const auto &in : inputs_)
+		if (in->source == src)
+			return in->name;
+	return std::string();
+}
+
+void Engine::LayerOrder(const EditTarget &t, obs_order_movement movement)
+{
+	if (t.layerId == 0)
+		return;
+	for (obs_sceneitem_t *item : TargetItems(t))
+		obs_sceneitem_set_order(item, movement);
+}
+
+void Engine::LayerFill(const EditTarget &t)
+{
+	if (!t.overlayUid.empty()) {
+		ResetOverlayPosition(FindOverlay(t.overlayUid));
+		return;
+	}
+	for (obs_sceneitem_t *item : TargetItems(t))
+		SetLayerBox(item, 0, 0, 1920, 1080);
+}
+
+void Engine::LayerRemove(const EditTarget &t)
+{
+	if (t.layerId == 0 || !pvw_ || !pvw_->isScene)
+		return; // 單一訊號源的畫面只有一層，不能刪
+	auto items = TargetItems(t);
+	{
+		std::lock_guard<std::mutex> lock(previewMutex_);
+		if (selection_ == t)
+			selection_ = EditTarget();
+	}
+	for (obs_sceneitem_t *item : items)
+		obs_sceneitem_remove(item);
 }
 
 // ---------------------------------------------------------------- 疊加
@@ -767,8 +1093,8 @@ void Engine::RemoveOverlay(const std::string &uid)
 	std::unique_ptr<Overlay> owned;
 	{
 		std::lock_guard<std::mutex> lock(previewMutex_);
-		if (selectedOverlay_ == uid)
-			selectedOverlay_.clear();
+		if (selection_.overlayUid == uid)
+			selection_ = EditTarget();
 		owned = std::move(*it);
 		overlays_.erase(it);
 	}
@@ -802,7 +1128,10 @@ void Engine::ToggleOverlay(const std::string &uid, bool direct)
 	else
 		ov->state = OverlayState::Off;
 	ApplyOverlayState(ov);
-	SetSelectedOverlay(ov->state == OverlayState::Preview ? uid : std::string());
+	if (ov->state == OverlayState::Preview)
+		SetSelectedOverlay(uid);
+	else if (Selection().overlayUid == uid)
+		SetSelection(EditTarget());
 }
 
 Overlay *Engine::FindOverlay(const std::string &uid)
@@ -811,49 +1140,6 @@ Overlay *Engine::FindOverlay(const std::string &uid)
 		if (ov->uid == uid)
 			return ov.get();
 	return nullptr;
-}
-
-Overlay *Engine::HitOverlay(float x, float y)
-{
-	for (auto it = overlays_.rbegin(); it != overlays_.rend(); ++it) {
-		Overlay *ov = it->get();
-		if (ov->state != OverlayState::Preview)
-			continue;
-		struct matrix4 box, inv;
-		obs_sceneitem_get_box_transform(ov->pvwItem, &box);
-		if (!matrix4_inv(&inv, &box))
-			continue;
-		struct vec3 p;
-		vec3_set(&p, x, y, 0.0f);
-		vec3_transform(&p, &p, &inv);
-		if (p.x >= 0.0f && p.x <= 1.0f && p.y >= 0.0f && p.y <= 1.0f)
-			return ov;
-	}
-	return nullptr;
-}
-
-void Engine::MoveOverlay(Overlay *ov, float dx, float dy)
-{
-	if (!ov)
-		return;
-	struct vec2 pos;
-	obs_sceneitem_get_pos(ov->pvwItem, &pos);
-	pos.x += dx;
-	pos.y += dy;
-	obs_sceneitem_set_pos(ov->pvwItem, &pos);
-	obs_sceneitem_set_pos(ov->pgmItem, &pos);
-}
-
-void Engine::ScaleOverlay(Overlay *ov, float factor)
-{
-	if (!ov)
-		return;
-	struct vec2 sc;
-	obs_sceneitem_get_scale(ov->pvwItem, &sc);
-	float s = std::clamp(sc.x * factor, 0.05f, 10.0f);
-	vec2_set(&sc, s, s);
-	obs_sceneitem_set_scale(ov->pvwItem, &sc);
-	obs_sceneitem_set_scale(ov->pgmItem, &sc);
 }
 
 void Engine::ResetOverlayPosition(Overlay *ov)
@@ -901,7 +1187,7 @@ void Engine::ResetOverlayPosition(Overlay *ov)
 void Engine::SetSelectedOverlay(const std::string &uid)
 {
 	std::lock_guard<std::mutex> lock(previewMutex_);
-	selectedOverlay_ = uid;
+	selection_ = EditTarget{uid, 0};
 }
 
 // ---------------------------------------------------------------- 輸出
@@ -1285,11 +1571,46 @@ std::string Engine::SaveProjectJson() const
 	obs_data_set_int(root, "version", 1);
 
 	obs_data_array_t *ins = obs_data_array_create();
+	auto uidOf = [this](obs_source_t *src) {
+		for (const auto &x : inputs_)
+			if (x->source == src)
+				return x->uid;
+		return std::string();
+	};
 	for (const auto &in : inputs_) {
 		obs_data_t *d = obs_data_create();
 		obs_data_set_string(d, "uid", in->uid.c_str());
 		obs_data_set_string(d, "name", in->name.c_str());
 		obs_data_set_string(d, "type", in->typeId.c_str());
+
+		// 圖層的位置與大小（單一訊號源只有一層；畫面組合有多層，由下到上）
+		if (in->wrap) {
+			obs_data_array_t *layers = obs_data_array_create();
+			for (obs_sceneitem_t *item : SceneItems(in->wrap)) {
+				const std::string su = uidOf(obs_sceneitem_get_source(item));
+				if (su.empty())
+					continue;
+				const CanvasRect r = ItemRect(item);
+				obs_data_t *l = obs_data_create();
+				obs_data_set_string(l, "source", su.c_str());
+				obs_data_set_double(l, "x", r.x0);
+				obs_data_set_double(l, "y", r.y0);
+				obs_data_set_double(l, "w", r.x1 - r.x0);
+				obs_data_set_double(l, "h", r.y1 - r.y0);
+				obs_data_set_bool(l, "visible", obs_sceneitem_visible(item));
+				obs_data_array_push_back(layers, l);
+				obs_data_release(l);
+			}
+			obs_data_set_array(d, "layers", layers);
+			obs_data_array_release(layers);
+		}
+		if (in->isScene) {
+			obs_data_set_bool(d, "scene", true);
+			obs_data_array_push_back(ins, d);
+			obs_data_release(d);
+			continue;
+		}
+
 		obs_data_t *st = obs_source_get_settings(in->source);
 		obs_data_set_obj(d, "settings", st);
 		obs_data_release(st);
@@ -1355,23 +1676,56 @@ void Engine::LoadProjectJson(const std::string &json)
 	if (!root)
 		return;
 
+	auto applyBox = [](obs_sceneitem_t *item, obs_data_t *l) {
+		if (!item || !obs_data_has_user_value(l, "w"))
+			return;
+		SetLayerBox(item, (float)obs_data_get_double(l, "x"), (float)obs_data_get_double(l, "y"),
+			    (float)obs_data_get_double(l, "w"), (float)obs_data_get_double(l, "h"));
+		if (obs_data_has_user_value(l, "visible"))
+			obs_sceneitem_set_visible(item, obs_data_get_bool(l, "visible"));
+	};
+
+	// 第一輪：訊號源；第二輪：畫面組合（圖層要參照已建立的訊號源）
 	obs_data_array_t *ins = obs_data_get_array(root, "inputs");
-	for (size_t i = 0; ins && i < obs_data_array_count(ins); i++) {
-		obs_data_t *d = obs_data_array_item(ins, i);
-		obs_data_t *st = obs_data_get_obj(d, "settings");
-		Input *in = AddInput(obs_data_get_string(d, "type"), obs_data_get_string(d, "name"), st,
-				     obs_data_get_string(d, "uid"));
-		if (in) {
-			obs_source_set_muted(in->source, obs_data_get_bool(d, "muted"));
-			if (obs_data_has_user_value(d, "volume"))
-				obs_source_set_volume(in->source, (float)obs_data_get_double(d, "volume"));
-			if (obs_data_get_bool(d, "monitor"))
-				obs_source_set_monitoring_type(in->source, OBS_MONITORING_TYPE_MONITOR_AND_OUTPUT);
-			if (obs_data_has_user_value(d, "enabled") && !obs_data_get_bool(d, "enabled"))
-				obs_source_set_enabled(in->source, false);
+	for (int pass = 0; pass < 2; pass++) {
+		for (size_t i = 0; ins && i < obs_data_array_count(ins); i++) {
+			obs_data_t *d = obs_data_array_item(ins, i);
+			const bool isScene = obs_data_get_bool(d, "scene");
+			obs_data_array_t *layers = obs_data_get_array(d, "layers");
+			if (pass == 0 && !isScene) {
+				obs_data_t *st = obs_data_get_obj(d, "settings");
+				Input *in = AddInput(obs_data_get_string(d, "type"), obs_data_get_string(d, "name"), st,
+						     obs_data_get_string(d, "uid"));
+				if (in) {
+					obs_source_set_muted(in->source, obs_data_get_bool(d, "muted"));
+					if (obs_data_has_user_value(d, "volume"))
+						obs_source_set_volume(in->source, (float)obs_data_get_double(d, "volume"));
+					if (obs_data_get_bool(d, "monitor"))
+						obs_source_set_monitoring_type(in->source,
+									       OBS_MONITORING_TYPE_MONITOR_AND_OUTPUT);
+					if (obs_data_has_user_value(d, "enabled") && !obs_data_get_bool(d, "enabled"))
+						obs_source_set_enabled(in->source, false);
+					if (in->wrap && layers && obs_data_array_count(layers) == 1) {
+						obs_data_t *l = obs_data_array_item(layers, 0);
+						auto items = SceneItems(in->wrap);
+						if (!items.empty())
+							applyBox(items[0], l);
+						obs_data_release(l);
+					}
+				}
+				obs_data_release(st);
+			} else if (pass == 1 && isScene) {
+				Input *sc = CreateScene(obs_data_get_string(d, "name"), obs_data_get_string(d, "uid"));
+				for (size_t k = 0; sc && layers && k < obs_data_array_count(layers); k++) {
+					obs_data_t *l = obs_data_array_item(layers, k);
+					if (Input *src = FindInput(obs_data_get_string(l, "source")))
+						applyBox(AddLayer(sc, src, true), l);
+					obs_data_release(l);
+				}
+			}
+			obs_data_array_release(layers);
+			obs_data_release(d);
 		}
-		obs_data_release(st);
-		obs_data_release(d);
 	}
 	obs_data_array_release(ins);
 

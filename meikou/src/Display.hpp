@@ -2,6 +2,8 @@
 
 #include <QWidget>
 
+#include "Engine.hpp"
+
 #include <obs.h>
 
 #include <functional>
@@ -24,7 +26,8 @@ public:
 	QPaintEngine *paintEngine() const override { return nullptr; }
 	void DestroyDisplay();
 
-	std::function<void()> onOverlayChanged; // 拖曳或縮放後通知介面存檔
+	std::function<void()> onOverlayChanged; // 拖曳、縮放、圖層變更後通知介面存檔
+	std::function<void()> onLayersChanged;  // 圖層增刪後通知介面重建列表
 
 protected:
 	void showEvent(QShowEvent *event) override;
@@ -39,13 +42,18 @@ private:
 	void CreateDisplay();
 	QSize PixelSize() const;
 	bool ToCanvas(const QPointF &widgetPos, float &x, float &y) const;
+	float CanvasPerPixel() const;
+	int HitHandle(float x, float y) const; // 目前選取物件的哪個角（-1 表示沒有）
+	void ShowContextMenu(const QPoint &globalPos, const EditTarget &t);
 	static void Draw(void *param, uint32_t cx, uint32_t cy);
 
 	Engine &engine_;
 	Mode mode_;
 	obs_display_t *display_ = nullptr;
 
-	std::string dragUid_;
+	EditTarget drag_;
+	int dragCorner_ = -1; // >=0 表示正在拖角落縮放
+	bool dragged_ = false;
 	float lastX_ = 0, lastY_ = 0;
 };
 

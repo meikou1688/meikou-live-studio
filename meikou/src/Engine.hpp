@@ -27,7 +27,21 @@ struct Input {
 	obs_source_t *source = nullptr;
 	obs_scene_t *wrap = nullptr;
 	bool audioOnly = false;
+	bool isScene = false; // 畫面組合：wrap 裡放多個訊號源圖層（子母畫面、並排等）
 	uint32_t channel = 0;
+};
+
+// 預覽畫面裡可以直接拖曳、縮放的東西：疊加素材，或預覽畫面裡的圖層
+struct EditTarget {
+	std::string overlayUid;
+	int64_t layerId = 0;
+	bool Valid() const { return !overlayUid.empty() || layerId != 0; }
+	bool operator==(const EditTarget &o) const { return overlayUid == o.overlayUid && layerId == o.layerId; }
+	bool operator!=(const EditTarget &o) const { return !(*this == o); }
+};
+
+struct CanvasRect {
+	float x0 = 0, y0 = 0, x1 = 0, y1 = 0;
 };
 
 enum class OverlayState { Off, Preview, Program };
@@ -107,6 +121,12 @@ public:
 	std::vector<Input *> VideoInputs() const;
 	bool HasAudio(const Input *in) const;
 
+	// ---------- 畫面組合（多個訊號源疊在同一個畫面） ----------
+	Input *CreateScene(const std::string &name, const std::string &uid = std::string());
+	// 把訊號源疊到目前的預覽畫面上；預覽是單一訊號源時，自動建立新的畫面組合
+	Input *ComposeOnPreview(Input *src);
+	std::string NextSceneName() const;
+
 	// ---------- 切換 ----------
 	void SetPreview(Input *in);
 	Input *Preview() const { return pvw_; }
@@ -119,8 +139,22 @@ public:
 	int TransitionDuration() const { return transitionMs_; }
 	std::vector<Choice> TransitionTypes() const;
 
-	// 預覽視窗的繪製（在繪圖執行緒）
-	void RenderPreview();
+	// 預覽視窗的繪製（在繪圖執行緒）；handleSize 是控制點大小（1920×1080 座標）
+	void RenderPreview(float handleSize);
+
+	// ---------- 預覽畫面裡的編輯（座標都是 1920×1080） ----------
+	EditTarget HitPreview(float x, float y);
+	bool TargetRect(const EditTarget &t, CanvasRect &r);
+	bool IsLocked(const EditTarget &t); // 填滿整個畫面的圖層不能直接拖動，避免誤觸
+	void MoveTarget(const EditTarget &t, float dx, float dy);
+	void ResizeTarget(const EditTarget &t, int corner, float mx, float my); // corner：0 左上、1 右上、2 右下、3 左下
+	void ScaleTarget(const EditTarget &t, float factor);
+	void SetSelection(const EditTarget &t);
+	EditTarget Selection() const;
+	std::string TargetName(const EditTarget &t);
+	void LayerOrder(const EditTarget &t, obs_order_movement movement);
+	void LayerFill(const EditTarget &t);
+	void LayerRemove(const EditTarget &t);
 	obs_source_t *PreviewOverlayScene() const { return pvwOverlay_ ? obs_scene_get_source(pvwOverlay_) : nullptr; }
 
 	// ---------- 疊加 ----------
@@ -132,12 +166,8 @@ public:
 	void ToggleOverlay(const std::string &uid, bool direct);
 	Overlay *FindOverlay(const std::string &uid);
 	const std::vector<std::unique_ptr<Overlay>> &Overlays() const { return overlays_; }
-	Overlay *HitOverlay(float x, float y); // 以 1920×1080 座標找預覽中的疊加
-	void MoveOverlay(Overlay *ov, float dx, float dy);
-	void ScaleOverlay(Overlay *ov, float factor);
 	void ResetOverlayPosition(Overlay *ov);
 	void SetSelectedOverlay(const std::string &uid);
-	const std::string &SelectedOverlay() const { return selectedOverlay_; }
 
 	// ---------- 輸出 ----------
 	std::vector<Choice> VideoEncoders() const;
@@ -167,6 +197,8 @@ private:
 	void ApplyOverlayState(Overlay *ov);
 	void BuildOverlaySource(Overlay *ov);
 	uint32_t NextAudioChannel() const;
+	std::vector<obs_sceneitem_t *> TargetItems(const EditTarget &t);
+	obs_sceneitem_t *AddLayer(Input *scene, Input *src, bool fullscreen);
 	std::string NewUid(const char *prefix);
 
 	static void OnOutputStart(void *data, calldata_t *cd);
@@ -191,7 +223,7 @@ private:
 	obs_scene_t *pvwOverlay_ = nullptr;
 	obs_scene_t *pgmOverlay_ = nullptr;
 	obs_source_t *overlayFade_ = nullptr;
-	std::string selectedOverlay_;
+	EditTarget selection_;
 
 	obs_encoder_t *videoEncoder_ = nullptr;
 	obs_encoder_t *audioEncoder_ = nullptr;
