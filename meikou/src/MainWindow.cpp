@@ -176,7 +176,14 @@ MainWindow::MainWindow(Engine &engine, const QString &projectPath, QWidget *pare
 	tabs->addTab(BuildSourcesTab(), QStringLiteral("訊號源"));
 	bottomSplit_ = new QSplitter(Qt::Horizontal);
 	bottomSplit_->setObjectName(QStringLiteral("bottomSplit"));
-	bottomSplit_->addWidget(rowsPanel_);
+	// 左半放進可捲動區：螢幕較矮時改成捲動，不會把按鈕擠扁
+	auto *rowsScroll = new QScrollArea;
+	rowsScroll->setWidget(rowsPanel_);
+	rowsScroll->setWidgetResizable(true);
+	rowsScroll->setFrameShape(QFrame::NoFrame);
+	rowsScroll->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
+	rowsScroll->setMinimumWidth(420);
+	bottomSplit_->addWidget(rowsScroll);
 	bottomSplit_->addWidget(tabs);
 	bottomSplit_->setChildrenCollapsible(false);
 	bottomSplit_->setStretchFactor(0, 1);
