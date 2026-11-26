@@ -167,6 +167,19 @@ std::vector<obs_sceneitem_t *> SceneItems(obs_scene_t *scene)
 	return list;
 }
 
+// 場景裡的疊加素材：顯示／隱藏時淡入淡出 0.3 秒
+void AddLayerFade(obs_sceneitem_t *item)
+{
+	for (bool show : {true, false}) {
+		obs_source_t *fade = obs_source_create_private("fade_transition", "layer fade", nullptr);
+		if (fade) {
+			obs_sceneitem_set_transition(item, show, fade);
+			obs_sceneitem_set_transition_duration(item, show, 300);
+			obs_source_release(fade);
+		}
+	}
+}
+
 } // namespace
 
 Engine::~Engine()
@@ -362,7 +375,7 @@ bool Engine::OutputsActive() const
 void Engine::Tick()
 {
 	for (auto &ov : overlays_) {
-		if (ov->kind == "clock" && ov->state != OverlayState::Off)
+		if (ov->kind == "clock") // 時鐘可能在場景裡，所以不管疊加列狀態都要每秒更新
 			RefreshGraphic(ov.get());
 	}
 	ForceStopStuckOutputs();
@@ -413,8 +426,6 @@ Input *Engine::AddInput(const std::string &typeId, const std::string &name, obs_
 
 	Input *raw = in.get();
 	inputs_.push_back(std::move(in));
-	if (!raw->audioOnly && !pvw_)
-		SetPreview(raw);
 	return raw;
 }
 
@@ -490,6 +501,15 @@ Input *Engine::DuplicateScene(const std::string &uid)
 		return nullptr;
 	for (obs_sceneitem_t *item : SceneItems(src->wrap)) {
 		obs_source_t *s = obs_sceneitem_get_source(item);
+		if (OverlayBySource(s)) {
+			obs_sceneitem_t *n = obs_scene_add(copy->wrap, s);
+			AddLayerFade(n);
+			struct obs_transform_info info;
+			obs_sceneitem_get_info2(item, &info);
+			obs_sceneitem_set_info2(n, &info);
+			obs_sceneitem_set_visible(n, obs_sceneitem_visible(item));
+			continue;
+		}
 		for (const auto &in : inputs_) {
 			if (in->source != s)
 				continue;
@@ -534,6 +554,122 @@ std::string Engine::NextSceneName() const
 		if (in->isScene)
 			n++;
 	return "場景 " + std::to_string(n);
+}
+
+Overlay *Engine::OverlayBySource(obs_source_t *source) const
+{
+	for (const auto &ov : overlays_)
+		if (ov->source == source)
+			return ov.get();
+	return nullptr;
+}
+
+obs_sceneitem_t *Engine::AddOverlayToScene(Input *scene, Overlay *ov)
+{
+	if (!scene || !scene->isScene || !scene->wrap || !ov || !ov->source)
+		return nullptr;
+	obs_sceneitem_t *item = obs_scene_add(scene->wrap, ov->source);
+	if (!item)
+		return nullptr;
+	// 先用這個疊加素材目前的位置與大小
+	struct obs_transform_info info;
+	obs_sceneitem_get_info2(ov->pvwItem, &info);
+	obs_sceneitem_set_info2(item, &info);
+	obs_sceneitem_set_visible(item, true);
+	AddLayerFade(item);
+	if (scene == pvw_)
+		SetSelection({std::string(), obs_sceneitem_get_id(item)});
+	return item;
+}
+
+std::vector<LayerInfo> Engine::SceneLayers(Input *scene) const
+{
+	std::vector<LayerInfo> out;
+	if (!scene || !scene->wrap)
+		return out;
+	auto items = SceneItems(scene->wrap);
+	for (auto it = items.rbegin(); it != items.rend(); ++it) {
+		LayerInfo li;
+		li.id = obs_sceneitem_get_id(*it);
+		li.visible = obs_sceneitem_visible(*it);
+		obs_source_t *src = obs_sceneitem_get_source(*it);
+		if (Overlay *ov = OverlayBySource(src)) {
+			li.name = ov->name;
+			li.uid = ov->uid;
+			li.isOverlay = true;
+		} else {
+			for (const auto &in : inputs_) {
+				if (in->source == src) {
+					li.name = in->name;
+					li.uid = in->uid;
+				}
+			}
+		}
+		out.push_back(li);
+	}
+	return out;
+}
+
+bool Engine::LayerVisible(Input *scene, int64_t layerId) const
+{
+	if (!scene || !scene->wrap)
+		return false;
+	obs_sceneitem_t *item = obs_scene_find_sceneitem_by_id(scene->wrap, layerId);
+	return item && obs_sceneitem_visible(item);
+}
+
+obs_sceneitem_t *Engine::AddSourceToScene(Input *scene, Input *src)
+{
+	obs_sceneitem_t *item = AddLayer(scene, src, false);
+	if (item && scene == pvw_)
+		SetSelection({std::string(), obs_sceneitem_get_id(item)});
+	return item;
+}
+
+void Engine::LayerOrderIn(Input *scene, int64_t layerId, obs_order_movement movement)
+{
+	if (!scene || !scene->wrap)
+		return;
+	if (obs_sceneitem_t *item = obs_scene_find_sceneitem_by_id(scene->wrap, layerId))
+		obs_sceneitem_set_order(item, movement);
+}
+
+void Engine::LayerResetIn(Input *scene, int64_t layerId)
+{
+	if (!scene || !scene->wrap)
+		return;
+	obs_sceneitem_t *item = obs_scene_find_sceneitem_by_id(scene->wrap, layerId);
+	if (!item)
+		return;
+	if (Overlay *ov = OverlayBySource(obs_sceneitem_get_source(item))) {
+		ResetOverlayPosition(ov);
+		struct obs_transform_info info;
+		obs_sceneitem_get_info2(ov->pvwItem, &info);
+		obs_sceneitem_set_info2(item, &info);
+	} else {
+		SetLayerBox(item, 0, 0, 1920, 1080);
+	}
+}
+
+void Engine::LayerRemoveIn(Input *scene, int64_t layerId)
+{
+	if (!scene || !scene->wrap)
+		return;
+	{
+		std::lock_guard<std::mutex> lock(previewMutex_);
+		if (selection_.layerId == layerId)
+			selection_ = EditTarget();
+	}
+	if (obs_sceneitem_t *item = obs_scene_find_sceneitem_by_id(scene->wrap, layerId))
+		obs_sceneitem_remove(item);
+}
+
+void Engine::SetLayerVisible(Input *scene, int64_t layerId, bool visible)
+{
+	if (!scene || !scene->wrap)
+		return;
+	if (obs_sceneitem_t *item = obs_scene_find_sceneitem_by_id(scene->wrap, layerId))
+		obs_sceneitem_set_visible(item, visible);
 }
 
 obs_sceneitem_t *Engine::AddLayer(Input *scene, Input *src, bool fullscreen)
@@ -883,6 +1019,8 @@ std::string Engine::TargetName(const EditTarget &t)
 	if (items.empty())
 		return std::string();
 	obs_source_t *src = obs_sceneitem_get_source(items[0]);
+	if (Overlay *ov = OverlayBySource(src))
+		return ov->name;
 	for (const auto &in : inputs_)
 		if (in->source == src)
 			return in->name;
@@ -903,8 +1041,8 @@ void Engine::LayerFill(const EditTarget &t)
 		ResetOverlayPosition(FindOverlay(t.overlayUid));
 		return;
 	}
-	for (obs_sceneitem_t *item : TargetItems(t))
-		SetLayerBox(item, 0, 0, 1920, 1080);
+	if (pvw_)
+		LayerResetIn(pvw_, t.layerId);
 }
 
 void Engine::LayerRemove(const EditTarget &t)
@@ -1010,6 +1148,18 @@ void Engine::RemoveOverlay(const std::string &uid)
 	Overlay *ov = owned.get();
 	obs_sceneitem_remove(ov->pvwItem);
 	obs_sceneitem_remove(ov->pgmItem);
+	// 也從所有場景拿掉
+	for (const auto &in : inputs_) {
+		if (!in->isScene || !in->wrap)
+			continue;
+		for (obs_sceneitem_t *item : SceneItems(in->wrap)) {
+			if (obs_sceneitem_get_source(item) == ov->source) {
+				if (selection_.layerId == obs_sceneitem_get_id(item))
+					selection_ = EditTarget();
+				obs_sceneitem_remove(item);
+			}
+		}
+	}
 	if (ov->source)
 		obs_source_release(ov->source);
 	if (ov->t1)
@@ -1545,6 +1695,21 @@ std::string Engine::SaveProjectJson() const
 		if (in->wrap) {
 			obs_data_array_t *layers = obs_data_array_create();
 			for (obs_sceneitem_t *item : SceneItems(in->wrap)) {
+				if (Overlay *ov = OverlayBySource(obs_sceneitem_get_source(item))) {
+					struct obs_transform_info info;
+					obs_sceneitem_get_info2(item, &info);
+					obs_data_t *l = obs_data_create();
+					obs_data_set_string(l, "overlay", ov->uid.c_str());
+					obs_data_set_double(l, "px", info.pos.x);
+					obs_data_set_double(l, "py", info.pos.y);
+					obs_data_set_double(l, "sx", info.scale.x);
+					obs_data_set_double(l, "sy", info.scale.y);
+					obs_data_set_int(l, "align", info.alignment);
+					obs_data_set_bool(l, "visible", obs_sceneitem_visible(item));
+					obs_data_array_push_back(layers, l);
+					obs_data_release(l);
+					continue;
+				}
 				const std::string su = uidOf(obs_sceneitem_get_source(item));
 				if (su.empty())
 					continue;
@@ -1657,7 +1822,7 @@ void Engine::LoadProjectJson(const std::string &json)
 
 	// 第一輪：訊號源；第二輪：畫面組合（圖層要參照已建立的訊號源）
 	obs_data_array_t *ins = obs_data_get_array(root, "inputs");
-	for (int pass = 0; pass < 2; pass++) {
+	for (int pass = 0; pass < 1; pass++) { // 場景（第二輪）移到疊加素材建立之後
 		for (size_t i = 0; ins && i < obs_data_array_count(ins); i++) {
 			obs_data_t *d = obs_data_array_item(ins, i);
 			const bool isScene = obs_data_get_bool(d, "scene");
@@ -1684,20 +1849,11 @@ void Engine::LoadProjectJson(const std::string &json)
 					}
 				}
 				obs_data_release(st);
-			} else if (pass == 1 && isScene) {
-				Input *sc = CreateScene(obs_data_get_string(d, "name"), obs_data_get_string(d, "uid"));
-				for (size_t k = 0; sc && layers && k < obs_data_array_count(layers); k++) {
-					obs_data_t *l = obs_data_array_item(layers, k);
-					if (Input *src = FindInput(obs_data_get_string(l, "source")))
-						applyBox(AddLayer(sc, src, true), l);
-					obs_data_release(l);
-				}
 			}
 			obs_data_array_release(layers);
 			obs_data_release(d);
 		}
 	}
-	obs_data_array_release(ins);
 
 	obs_data_array_t *ovs = obs_data_get_array(root, "overlays");
 	for (size_t i = 0; ovs && i < obs_data_array_count(ovs); i++) {
@@ -1745,6 +1901,41 @@ void Engine::LoadProjectJson(const std::string &json)
 		obs_data_release(d);
 	}
 	obs_data_array_release(ovs);
+
+	// 場景：圖層可以是訊號源，也可以是疊加素材
+	for (size_t i = 0; ins && i < obs_data_array_count(ins); i++) {
+		obs_data_t *d = obs_data_array_item(ins, i);
+		if (obs_data_get_bool(d, "scene")) {
+			obs_data_array_t *layers = obs_data_get_array(d, "layers");
+			Input *sc = CreateScene(obs_data_get_string(d, "name"), obs_data_get_string(d, "uid"));
+			for (size_t k = 0; sc && layers && k < obs_data_array_count(layers); k++) {
+				obs_data_t *l = obs_data_array_item(layers, k);
+				const char *ovUid = obs_data_get_string(l, "overlay");
+				if (ovUid && *ovUid) {
+					if (Overlay *ov = FindOverlay(ovUid)) {
+						if (obs_sceneitem_t *item = obs_scene_add(sc->wrap, ov->source)) {
+							AddLayerFade(item);
+							struct vec2 pos, scale;
+							vec2_set(&pos, (float)obs_data_get_double(l, "px"), (float)obs_data_get_double(l, "py"));
+							vec2_set(&scale, (float)obs_data_get_double(l, "sx"), (float)obs_data_get_double(l, "sy"));
+							obs_sceneitem_set_alignment(item, (uint32_t)obs_data_get_int(l, "align"));
+							obs_sceneitem_set_pos(item, &pos);
+							if (scale.x > 0 && scale.y > 0)
+								obs_sceneitem_set_scale(item, &scale);
+							obs_sceneitem_set_visible(item, !obs_data_has_user_value(l, "visible") ||
+												obs_data_get_bool(l, "visible"));
+						}
+					}
+				} else if (Input *src = FindInput(obs_data_get_string(l, "source"))) {
+					applyBox(AddLayer(sc, src, true), l);
+				}
+				obs_data_release(l);
+			}
+			obs_data_array_release(layers);
+		}
+		obs_data_release(d);
+	}
+	obs_data_array_release(ins);
 
 	targets_.clear();
 	obs_data_array_t *tgs = obs_data_get_array(root, "targets");

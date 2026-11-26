@@ -5,6 +5,7 @@
 #include <QMainWindow>
 
 class QCheckBox;
+class QGroupBox;
 class QComboBox;
 class QGridLayout;
 class QHBoxLayout;
@@ -53,7 +54,13 @@ private:
 	void RenameSource(const std::string &uid);
 	void ComposeSource(const std::string &uid);
 	void NewScene();
-	void AddSourceToScene(const std::string &sceneUid, const std::string &sourceUid);
+	void AddOverlayToCurrentScene(const std::string &overlayUid);
+	Input *CurrentScene();
+	Input *EnsureScene();
+	void SelectScene(const std::string &uid);
+	void ToggleLayer(int64_t layerId);
+	void ShowLayerMenu(QWidget *anchor, const QPoint &pos, const LayerInfo &layer);
+	void RebuildRows();
 	void RemoveSource(const std::string &uid);
 	void AddOverlayOfKind(const QString &kind);
 	void EditOverlay(const std::string &uid);
@@ -80,7 +87,10 @@ private:
 	Display *pgmDisplay_ = nullptr;
 	QHBoxLayout *busLayout_ = nullptr;
 	QHBoxLayout *ovlLayout_ = nullptr;
-	QCheckBox *directSend_ = nullptr;
+	QGroupBox *busGroup_ = nullptr;
+	QGroupBox *ovlGroup_ = nullptr;
+	std::string currentScene_;
+	QString rowSig_;
 	QComboBox *transitionBox_ = nullptr;
 	QSpinBox *durationBox_ = nullptr;
 	QPushButton *cutButton_ = nullptr;

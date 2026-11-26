@@ -19,6 +19,8 @@
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonObject>
+#include <QListWidget>
+#include <QPushButton>
 #include <QStandardPaths>
 #include <QSysInfo>
 #include <QThread>
@@ -437,36 +439,65 @@ int RunSelfTest(QApplication &app, const QString &configDir, const QString &repo
 	rep.Check(QStringLiteral("所有版型（含直式、斜體）都畫得出來，大小等於圖卡本身"), badStyles == 0,
 		  QStringLiteral("共 %1 種組合%2").arg(styleCount).arg(bad.isEmpty() ? QString() : QStringLiteral("；有問題：") + bad.join(u'、')));
 
-	// 疊加的送出／撤回規則
+	// 疊加屬於場景：每個場景有自己的訊號源與疊加
+	rep.Section(QStringLiteral("場景裡的疊加"));
 	GraphicSpec lower;
 	lower.kind = "lower";
 	lower.text1 = "王小明";
 	lower.text2 = "Meikou Live Studio 主持人";
 	ApplyGraphicDefaults(lower);
 	Overlay *ovLower = engine.AddOverlay(lower, "姓名條");
-	engine.ToggleOverlay(ovLower->uid, false);
-	rep.Check(QStringLiteral("點疊加先上預覽"), ovLower->state == OverlayState::Preview);
-	engine.SetPreview(scene);
-	engine.Cut();
-	rep.Check(QStringLiteral("送出時疊加跟著上播出"), ovLower->state == OverlayState::Program);
-	engine.ToggleOverlay(ovLower->uid, false);
-	rep.Check(QStringLiteral("播出中的疊加點一下撤回到預覽"), ovLower->state == OverlayState::Preview);
-	engine.ToggleOverlay(ovLower->uid, false);
-	rep.Check(QStringLiteral("預覽中的疊加再點一下關閉"), ovLower->state == OverlayState::Off);
-	engine.ToggleOverlay(ovLower->uid, true);
-	rep.Check(QStringLiteral("勾「直接送出」時直接上播出"), ovLower->state == OverlayState::Program);
-	engine.ToggleOverlay(ovLower->uid, true);
-	engine.ToggleOverlay(ovLower->uid, true);
+	engine.SetPreview(dup);
+	obs_sceneitem_t *lowerItem = engine.AddOverlayToScene(dup, ovLower);
+	const int64_t lowerId = lowerItem ? obs_sceneitem_get_id(lowerItem) : 0;
+	auto layersOf = [&](Input *sc, bool overlays) {
+		int n = 0;
+		for (const auto &l : engine.SceneLayers(sc))
+			n += l.isOverlay == overlays ? 1 : 0;
+		return n;
+	};
+	bool tagged = false;
+	for (const auto &l : engine.SceneLayers(dup))
+		tagged = tagged || (l.id == lowerId && l.isOverlay && l.uid == ovLower->uid);
+	rep.Check(QStringLiteral("疊加加進場景，列表只顯示這個場景的內容"), lowerId != 0 && tagged && layersOf(dup, true) == 1 &&
+										    layersOf(dup, false) == 1,
+		  QStringLiteral("訊號源 %1、疊加 %2").arg(layersOf(dup, false)).arg(layersOf(dup, true)));
+	rep.Check(QStringLiteral("其他場景不會出現這個疊加"), layersOf(scene, true) == 0);
+	rep.Check(QStringLiteral("疊加不再全域疊在所有畫面上"), ovLower->state == OverlayState::Off);
+
+	const EditTarget lowerT{std::string(), lowerId};
 	CanvasRect lr;
-	engine.TargetRect({ovLower->uid, 0}, lr);
+	engine.TargetRect(lowerT, lr);
 	rep.Check(QStringLiteral("姓名條預設在左下、大小合理"), lr.x0 > 50 && lr.x0 < 300 && lr.y1 > 900 && (lr.x1 - lr.x0) < 1000,
 		  RectText(lr));
 	CanvasRect lr2;
-	engine.ResizeTarget({ovLower->uid, 0}, 2, lr.x1 + 200, lr.y1 + 100);
-	engine.TargetRect({ovLower->uid, 0}, lr2);
+	engine.ResizeTarget(lowerT, 2, lr.x1 + 200, lr.y1 + 100);
+	engine.TargetRect(lowerT, lr2);
 	rep.Check(QStringLiteral("姓名條可以拖角落放大（不會變成整個畫面）"), (lr2.x1 - lr2.x0) > (lr.x1 - lr.x0) && (lr2.x1 - lr2.x0) < 1600,
 		  RectText(lr2));
-	engine.LayerFill({ovLower->uid, 0}); // 重設位置
+	engine.LayerResetIn(dup, lowerId);
+	CanvasRect lr3;
+	engine.TargetRect(lowerT, lr3);
+	rep.Check(QStringLiteral("疊加回到預設位置"), std::fabs(lr3.x0 - lr.x0) < 2 && std::fabs((lr3.x1 - lr3.x0) - (lr.x1 - lr.x0)) < 2,
+		  RectText(lr3));
+
+	engine.SetLayerVisible(dup, lowerId, false);
+	const bool hidden = !engine.LayerVisible(dup, lowerId);
+	engine.SetLayerVisible(dup, lowerId, true);
+	rep.Check(QStringLiteral("點按鈕在場景裡顯示／隱藏"), hidden && engine.LayerVisible(dup, lowerId));
+	engine.Cut();
+	rep.Check(QStringLiteral("送出場景時疊加一起上播出"), engine.Program() == dup && engine.LayerVisible(dup, lowerId));
+	engine.SetLayerVisible(dup, lowerId, false);
+	pump(500);
+	const bool liveHidden = !engine.LayerVisible(dup, lowerId);
+	engine.SetLayerVisible(dup, lowerId, true);
+	rep.Check(QStringLiteral("播出中的場景可以直接開關疊加"), liveHidden && engine.LayerVisible(dup, lowerId));
+	Input *dup2 = engine.DuplicateScene(dup->uid);
+	rep.Check(QStringLiteral("複製場景時疊加一起複製"), dup2 && layersOf(dup2, true) == 1);
+	engine.RemoveOverlay(ovLower->uid);
+	rep.Check(QStringLiteral("刪除疊加素材會從所有場景移除"), layersOf(dup, true) == 0 && dup2 && layersOf(dup2, true) == 0);
+	if (dup2)
+		engine.RemoveInput(dup2->uid);
 
 	// 截圖：播出畫面＋各種圖卡
 	auto addShow = [&](const char *kind, const char *style, const char *t1, const char *t2, bool vertical = false) {
@@ -481,7 +512,7 @@ int RunSelfTest(QApplication &app, const QString &configDir, const QString &repo
 		ApplyStyleColors(g);
 		g.vertical = vertical;
 		Overlay *ov = engine.AddOverlay(g, kind);
-		engine.ToggleOverlay(ov->uid, true);
+		engine.AddOverlayToScene(engine.Program(), ov); // 放進播出中的場景
 		return ov;
 	};
 	Overlay *ovClock = addShow("clock", "dark", "LIVE", "");
@@ -566,7 +597,7 @@ int RunSelfTest(QApplication &app, const QString &configDir, const QString &repo
 			pump(6000);
 			engine.QueryStats();
 			const Target &tt = engine.Targets()[0];
-			rep.Check(QStringLiteral("推流中有送出資料"), tt.active && tt.kbps > 500,
+			rep.Check(QStringLiteral("推流中有送出資料"), tt.active && tt.kbps > 100, // 沒有顯示卡的雲端機器畫面簡單時碼率較低
 				  QStringLiteral("%1 kbps，網路掉格 %2").arg(tt.kbps, 0, 'f', 0).arg(tt.dropped));
 			engine.StopStreaming();
 			rep.Check(QStringLiteral("停止推流"), waitFor([&] { return !engine.Streaming(); }, 15000));
@@ -603,16 +634,22 @@ int RunSelfTest(QApplication &app, const QString &configDir, const QString &repo
 	QJsonParseError pe;
 	const QJsonObject proj = QJsonDocument::fromJson(json, &pe).object();
 	rep.Check(QStringLiteral("專案檔是正確的 JSON"), pe.error == QJsonParseError::NoError);
-	int scenesSaved = 0, layersSaved = 0;
+	int scenesSaved = 0, layersSaved = 0, overlayLayersSaved = 0;
 	for (const auto &v : proj.value(QStringLiteral("inputs")).toArray()) {
 		const QJsonObject o = v.toObject();
 		if (o.value(QStringLiteral("scene")).toBool()) {
 			scenesSaved++;
-			layersSaved += o.value(QStringLiteral("layers")).toArray().size();
+			for (const auto &l : o.value(QStringLiteral("layers")).toArray()) {
+				if (l.toObject().contains(QStringLiteral("overlay")))
+					overlayLayersSaved++;
+				else
+					layersSaved++;
+			}
 		}
 	}
 	rep.Check(QStringLiteral("場景與圖層有存進專案"), scenesSaved == 2 && layersSaved == 3,
 		  QStringLiteral("%1 個場景、%2 層").arg(scenesSaved).arg(layersSaved));
+	rep.Check(QStringLiteral("場景裡的疊加有存進專案"), overlayLayersSaved == 4, QStringLiteral("%1 個").arg(overlayLayersSaved));
 	bool fieldsOk = false;
 	for (const auto &v : proj.value(QStringLiteral("overlays")).toArray()) {
 		const QJsonObject o = v.toObject();
@@ -648,6 +685,30 @@ int RunSelfTest(QApplication &app, const QString &configDir, const QString &repo
 		const QImage ui = window->grab().toImage();
 		ui.save(QDir(shotsDir).filePath(QStringLiteral("ui.png")));
 		rep.Check(QStringLiteral("主視窗開啟"), !ui.isNull() && ui.width() > 800, QStringLiteral("ui.png"));
+
+		// 點不同場景，下面兩列只顯示該場景的訊號源與疊加
+		auto countButtons = [window](const char *name) {
+			int n = 0;
+			for (QPushButton *b : window->findChildren<QPushButton *>())
+				n += b->objectName() == QLatin1String(name) ? 1 : 0;
+			return n;
+		};
+		auto *sceneList = window->findChild<QListWidget *>(QStringLiteral("sceneList"));
+		auto clickScene = [&](Input *sc) {
+			for (int i = 0; sceneList && i < sceneList->count(); i++) {
+				QListWidgetItem *it = sceneList->item(i);
+				if (it->data(Qt::UserRole).toString() == QString::fromUtf8(sc->uid.c_str()))
+					emit sceneList->itemClicked(it);
+			}
+			pump(400);
+		};
+		clickScene(scene);
+		const int aSrc = countButtons("busButton"), aOvl = countButtons("ovlButton");
+		clickScene(dup);
+		const int bSrc = countButtons("busButton"), bOvl = countButtons("ovlButton");
+		window->grab().toImage().save(QDir(shotsDir).filePath(QStringLiteral("ui-scene2.png")));
+		rep.Check(QStringLiteral("點場景只顯示該場景的訊號源與疊加"), aSrc == 2 && aOvl == 0 && bSrc == 1 && bOvl == 4,
+			  QStringLiteral("場景一：%1 訊號源／%2 疊加；場景二：%3／%4").arg(aSrc).arg(aOvl).arg(bSrc).arg(bOvl));
 
 		for (const char *kind : {"lower", "clock", "ticker", "logo", "text"}) {
 			GraphicSpec g;

@@ -254,7 +254,7 @@ jobs:
           local waited=0
           while kill -0 ${pid} 2>/dev/null && (( waited < 360 )); do sleep 2; (( waited += 2 )); done
           if kill -0 ${pid} 2>/dev/null; then echo 'SELFTEST TIMEOUT'; kill -9 ${pid}; fi
-          wait ${pid}; echo "selftest exit code: $?"
+          rc=0; wait ${pid} || rc=$?; echo "selftest exit code: ${rc}"
           sleep 1
           kill ${sink} 2>/dev/null || true
           cp -R "${TMPDIR}meikou-selftest/logs" selftest/ 2>/dev/null || true

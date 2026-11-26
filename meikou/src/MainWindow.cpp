@@ -278,7 +278,11 @@ QWidget *MainWindow::BuildSwitcher()
 	pvwTitle->setObjectName(QStringLiteral("pvwTitle"));
 	pvwDisplay_ = new Display(engine_, Display::Mode::Preview);
 	pvwDisplay_->onOverlayChanged = [this] { ScheduleSave(); };
-	pvwDisplay_->onLayersChanged = [this] { ScheduleSave(); };
+	pvwDisplay_->onLayersChanged = [this] {
+		rowSig_.clear();
+		RefreshBusState();
+		ScheduleSave();
+	};
 	auto *pvwFrame = new QFrame;
 	pvwFrame->setObjectName(QStringLiteral("pvwFrame"));
 	auto *pf = new QVBoxLayout(pvwFrame);
@@ -340,7 +344,7 @@ QWidget *MainWindow::BuildSwitcher()
 	monitors->addLayout(pgmBox, 1);
 	v->addLayout(monitors, 1);
 
-	// 場景列：每個場景整合多個訊號源，一次送出、一次撤回；可以建立幾十個
+	// 場景列：點一下放到預覽並成為「目前場景」，下面兩列只顯示這個場景的內容
 	auto *sceneGroup = new QGroupBox(QStringLiteral("場景　（點一下放到預覽，F1–F12 快捷鍵；按「送出」上播出，再按一次撤回到預覽）"));
 	auto *sceneOuter = new QHBoxLayout(sceneGroup);
 	sceneList_ = new QListWidget;
@@ -356,24 +360,16 @@ QWidget *MainWindow::BuildSwitcher()
 	sceneList_->setFocusPolicy(Qt::NoFocus);
 	sceneList_->setFixedHeight(128);
 	sceneList_->setContextMenuPolicy(Qt::CustomContextMenu);
-	connect(sceneList_, &QListWidget::itemClicked, this, [this](QListWidgetItem *it) {
-		engine_.SetPreview(engine_.FindInput(S(it->data(Qt::UserRole).toString())));
-		RefreshBusState();
-	});
+	connect(sceneList_, &QListWidget::itemClicked, this,
+		[this](QListWidgetItem *it) { SelectScene(S(it->data(Qt::UserRole).toString())); });
 	connect(sceneList_, &QListWidget::customContextMenuRequested, this, [this](const QPoint &pos) {
 		QListWidgetItem *it = sceneList_->itemAt(pos);
 		if (!it)
 			return;
 		const std::string uid = S(it->data(Qt::UserRole).toString());
+		if (uid.empty())
+			return;
 		QMenu m;
-		QMenu *addMenu = m.addMenu(QStringLiteral("加入訊號源到這個場景"));
-		for (Input *in : engine_.VideoInputs()) {
-			const std::string su = in->uid;
-			addMenu->addAction(Q(in->name), this, [this, uid, su] { AddSourceToScene(uid, su); });
-		}
-		if (addMenu->isEmpty())
-			addMenu->addAction(QStringLiteral("（先新增影像訊號源）"))->setEnabled(false);
-		m.addSeparator();
 		QAction *rename = m.addAction(QStringLiteral("重新命名…"));
 		QAction *dup = m.addAction(QStringLiteral("複製場景"));
 		m.addSeparator();
@@ -384,43 +380,26 @@ QWidget *MainWindow::BuildSwitcher()
 		else if (chosen == dup)
 			QTimer::singleShot(0, this, [this, uid] {
 				if (Input *c = engine_.DuplicateScene(uid)) {
-					engine_.SetPreview(c);
 					SourcesChanged();
+					SelectScene(c->uid);
 				}
 			});
 		else if (chosen == remove)
 			QTimer::singleShot(0, this, [this, uid] { RemoveSource(uid); });
 	});
 	sceneOuter->addWidget(sceneList_, 1);
-
 	auto *newScene = new QPushButton(QStringLiteral("＋ 新增場景"));
 	newScene->setObjectName(QStringLiteral("accent"));
-	newScene->setToolTip(QStringLiteral("新增場景並放到預覽。預覽中是單一訊號源時，會用它當場景的底圖"));
 	connect(newScene, &QPushButton::clicked, this, &MainWindow::NewScene);
-	auto *addToScene = new QPushButton(QStringLiteral("⧉ 加入訊號源"));
-	addToScene->setToolTip(QStringLiteral("把訊號源加進預覽中的場景（子母畫面、並排）；在預覽裡拖曳移動、拖四個角縮放"));
-	auto *composeMenu = new QMenu(addToScene);
-	connect(composeMenu, &QMenu::aboutToShow, this, [this, composeMenu] {
-		composeMenu->clear();
-		for (Input *in : engine_.VideoInputs()) {
-			const std::string uid = in->uid;
-			composeMenu->addAction(Q(in->name), this, [this, uid] { ComposeSource(uid); });
-		}
-		if (composeMenu->isEmpty())
-			composeMenu->addAction(QStringLiteral("（先新增影像訊號源）"))->setEnabled(false);
-	});
-	addToScene->setMenu(composeMenu);
 	auto *sceneBtns = new QVBoxLayout;
-	sceneBtns->setSpacing(6);
 	sceneBtns->addWidget(newScene);
-	sceneBtns->addWidget(addToScene);
 	sceneBtns->addStretch(1);
 	sceneOuter->addLayout(sceneBtns);
 	v->addWidget(sceneGroup);
 
-	// 訊號源切換列
-	auto *busGroup = new QGroupBox(QStringLiteral("訊號源　（數字鍵 1–9 單獨放到預覽；Shift＋點選＝加入預覽中的場景）"));
-	auto *busOuter = new QHBoxLayout(busGroup);
+	// 目前場景的訊號源
+	busGroup_ = new QGroupBox;
+	auto *busOuter = new QHBoxLayout(busGroup_);
 	auto *busScroll = new QScrollArea;
 	busScroll->setWidgetResizable(true);
 	busScroll->setFrameShape(QFrame::NoFrame);
@@ -460,25 +439,76 @@ QWidget *MainWindow::BuildSwitcher()
 		connect(a, &QAction::triggered, this, [this, kind] { AddSourceOfType(kind); });
 	}
 	addSrc->setMenu(menu);
-
+	auto *addExisting = new QPushButton(QStringLiteral("＋ 加入既有"));
+	addExisting->setToolTip(QStringLiteral("把其他場景用過的訊號源加進目前場景"));
+	auto *existMenu = new QMenu(addExisting);
+	connect(existMenu, &QMenu::aboutToShow, this, [this, existMenu] {
+		existMenu->clear();
+		Input *scene = CurrentScene();
+		const auto layers = engine_.SceneLayers(scene);
+		for (Input *in : engine_.VideoInputs()) {
+			bool inScene = false;
+			for (const auto &l : layers)
+				inScene = inScene || l.uid == in->uid;
+			if (inScene)
+				continue;
+			const std::string uid = in->uid;
+			existMenu->addAction(Q(in->name), this, [this, uid] { ComposeSource(uid); });
+		}
+		if (existMenu->isEmpty())
+			existMenu->addAction(QStringLiteral("（沒有其他訊號源）"))->setEnabled(false);
+	});
+	addExisting->setMenu(existMenu);
 	auto *btnCol = new QVBoxLayout;
 	btnCol->setSpacing(6);
 	btnCol->addWidget(addSrc);
+	btnCol->addWidget(addExisting);
 	busOuter->addLayout(btnCol);
-	v->addWidget(busGroup);
+	v->addWidget(busGroup_);
 
-	// 疊加列
-	auto *ovlGroup = new QGroupBox(QStringLiteral("疊加 OVL　（Q W E R T Y：先上預覽，按送出一起上播出；播出中再點一下撤回到預覽）"));
-	auto *ovlOuter = new QHBoxLayout(ovlGroup);
+	// 目前場景的疊加
+	ovlGroup_ = new QGroupBox;
+	auto *ovlOuter = new QHBoxLayout(ovlGroup_);
 	auto *ovlInner = new QWidget;
 	ovlLayout_ = new QHBoxLayout(ovlInner);
 	ovlLayout_->setContentsMargins(0, 0, 0, 0);
 	ovlLayout_->setSpacing(8);
 	ovlOuter->addWidget(ovlInner, 1);
-	directSend_ = new QCheckBox(QStringLiteral("直接送出（不經預覽）"));
-	connect(directSend_, &QCheckBox::toggled, this, [this](bool) { SaveSettings(); });
-	ovlOuter->addWidget(directSend_);
-	v->addWidget(ovlGroup);
+	auto *addOvl = new QPushButton(QStringLiteral("＋ 新增疊加"));
+	addOvl->setObjectName(QStringLiteral("accent"));
+	auto *ovlMenu = new QMenu(addOvl);
+	const char *kinds[][2] = {{"台標", "logo"}, {"姓名條", "lower"}, {"跑馬燈", "ticker"},
+				  {"時鐘", "clock"}, {"圖片", "image"},   {"文字", "text"}};
+	for (const auto &k : kinds) {
+		const QString kind = QString::fromLatin1(k[1]);
+		ovlMenu->addAction(QString::fromUtf8(k[0]), this, [this, kind] { AddOverlayOfKind(kind); });
+	}
+	addOvl->setMenu(ovlMenu);
+	auto *addExistingOvl = new QPushButton(QStringLiteral("＋ 加入既有"));
+	addExistingOvl->setToolTip(QStringLiteral("把其他場景用過的疊加素材加進目前場景"));
+	auto *existOvlMenu = new QMenu(addExistingOvl);
+	connect(existOvlMenu, &QMenu::aboutToShow, this, [this, existOvlMenu] {
+		existOvlMenu->clear();
+		const auto layers = engine_.SceneLayers(CurrentScene());
+		for (const auto &ov : engine_.Overlays()) {
+			bool inScene = false;
+			for (const auto &l : layers)
+				inScene = inScene || l.uid == ov->uid;
+			if (inScene)
+				continue;
+			const std::string uid = ov->uid;
+			existOvlMenu->addAction(Q(ov->name), this, [this, uid] { AddOverlayToCurrentScene(uid); });
+		}
+		if (existOvlMenu->isEmpty())
+			existOvlMenu->addAction(QStringLiteral("（沒有其他疊加素材）"))->setEnabled(false);
+	});
+	addExistingOvl->setMenu(existOvlMenu);
+	auto *ovlCol = new QVBoxLayout;
+	ovlCol->setSpacing(6);
+	ovlCol->addWidget(addOvl);
+	ovlCol->addWidget(addExistingOvl);
+	ovlOuter->addLayout(ovlCol);
+	v->addWidget(ovlGroup_);
 	return w;
 }
 
@@ -487,14 +517,17 @@ QWidget *MainWindow::BuildSourcesTab()
 	auto *w = new QWidget;
 	auto *v = new QVBoxLayout(w);
 	sourceList_ = new QListWidget;
-	v->addWidget(new QLabel(QStringLiteral("所有訊號源（影像與音訊）。雙擊開啟設定。")));
+	v->addWidget(new QLabel(QStringLiteral("素材庫：所有訊號源（影像與音訊）。雙擊開啟設定；「加入目前場景」放進正在編輯的場景。")));
 	v->addWidget(sourceList_, 1);
 	connect(sourceList_, &QListWidget::itemDoubleClicked, this,
 		[this](QListWidgetItem *it) { EditSource(S(it->data(Qt::UserRole).toString())); });
 	auto *row = new QHBoxLayout;
 	auto *props = new QPushButton(QStringLiteral("設定"));
 	auto *rename = new QPushButton(QStringLiteral("重新命名"));
-	auto *remove = new QPushButton(QStringLiteral("移除"));
+	auto *remove = new QPushButton(QStringLiteral("刪除"));
+	auto *toScene = new QPushButton(QStringLiteral("加入目前場景"));
+	toScene->setObjectName(QStringLiteral("accent"));
+	row->addWidget(toScene);
 	row->addWidget(props);
 	row->addWidget(rename);
 	row->addWidget(remove);
@@ -503,6 +536,7 @@ QWidget *MainWindow::BuildSourcesTab()
 		auto *it = sourceList_->currentItem();
 		return it ? S(it->data(Qt::UserRole).toString()) : std::string();
 	};
+	connect(toScene, &QPushButton::clicked, this, [this, current] { ComposeSource(current()); });
 	connect(props, &QPushButton::clicked, this, [this, current] { EditSource(current()); });
 	connect(rename, &QPushButton::clicked, this, [this, current] { RenameSource(current()); });
 	connect(remove, &QPushButton::clicked, this, [this, current] { RemoveSource(current()); });
@@ -524,7 +558,7 @@ QWidget *MainWindow::BuildOverlayTab()
 	}
 	v->addLayout(grid);
 	overlayList_ = new QListWidget;
-	v->addWidget(new QLabel(QStringLiteral("雙擊開啟設計視窗（版型、配色、字級）；在預覽畫面拖曳移動、拖四個角縮放。")));
+	v->addWidget(new QLabel(QStringLiteral("素材庫：雙擊開啟設計視窗（版型、配色、字級）；「加入目前場景」放進正在編輯的場景，再到預覽畫面拖曳、縮放。")));
 	v->addWidget(overlayList_, 1);
 	connect(overlayList_, &QListWidget::itemDoubleClicked, this,
 		[this](QListWidgetItem *it) { EditOverlay(S(it->data(Qt::UserRole).toString())); });
@@ -533,10 +567,11 @@ QWidget *MainWindow::BuildOverlayTab()
 	});
 	auto *row = new QHBoxLayout;
 	auto *edit = new QPushButton(QStringLiteral("編輯"));
-	auto *reset = new QPushButton(QStringLiteral("重設位置"));
+	auto *reset = new QPushButton(QStringLiteral("加入目前場景"));
+	reset->setObjectName(QStringLiteral("accent"));
 	auto *remove = new QPushButton(QStringLiteral("刪除"));
-	row->addWidget(edit);
 	row->addWidget(reset);
+	row->addWidget(edit);
 	row->addWidget(remove);
 	v->addLayout(row);
 	auto current = [this] {
@@ -544,12 +579,7 @@ QWidget *MainWindow::BuildOverlayTab()
 		return it ? S(it->data(Qt::UserRole).toString()) : std::string();
 	};
 	connect(edit, &QPushButton::clicked, this, [this, current] { EditOverlay(current()); });
-	connect(reset, &QPushButton::clicked, this, [this, current] {
-		if (Overlay *ov = engine_.FindOverlay(current())) {
-			engine_.ResetOverlayPosition(ov);
-			ScheduleSave();
-		}
-	});
+	connect(reset, &QPushButton::clicked, this, [this, current] { AddOverlayToCurrentScene(current()); });
 	connect(remove, &QPushButton::clicked, this, [this, current] {
 		const std::string uid = current();
 		if (uid.empty())
@@ -658,36 +688,33 @@ QWidget *MainWindow::BuildOutputTab()
 
 void MainWindow::SetupShortcuts()
 {
-	for (int i = 0; i < 9; i++) {
-		auto *sc = new QShortcut(QKeySequence(Qt::Key_1 + i), this);
-		connect(sc, &QShortcut::activated, this, [this, i] {
+	// 1–9：目前場景的訊號源顯示／隱藏；Q W E R T Y…：目前場景的疊加顯示／隱藏；F1–F12：場景
+	auto layerKey = [this](QKeySequence seq, bool overlays, int index) {
+		auto *sc = new QShortcut(seq, this);
+		connect(sc, &QShortcut::activated, this, [this, overlays, index] {
 			if (TypingFocus())
 				return;
-			auto vids = engine_.VideoInputs();
-			if (i < (int)vids.size()) {
-				engine_.SetPreview(vids[i]);
-				RefreshBusState();
+			int n = 0;
+			for (const auto &l : engine_.SceneLayers(CurrentScene())) {
+				if (l.isOverlay != overlays)
+					continue;
+				if (n++ == index) {
+					ToggleLayer(l.id);
+					return;
+				}
 			}
 		});
-	}
-	for (int i = 0; i < 9; i++) {
-		auto *sc = new QShortcut(QKeySequence(Qt::SHIFT | (Qt::Key_1 + i)), this);
-		connect(sc, &QShortcut::activated, this, [this, i] {
-			if (TypingFocus())
-				return;
-			auto vids = engine_.VideoInputs();
-			if (i < (int)vids.size())
-				ComposeSource(vids[i]->uid);
-		});
-	}
+	};
+	for (int i = 0; i < 9; i++)
+		layerKey(QKeySequence(Qt::Key_1 + i), false, i);
+	for (int i = 0; kOverlayKeys[i]; i++)
+		layerKey(QKeySequence(QString(QLatin1Char(kOverlayKeys[i]))), true, i);
 	for (int i = 0; i < 12; i++) {
 		auto *sc = new QShortcut(QKeySequence(Qt::Key_F1 + i), this);
 		connect(sc, &QShortcut::activated, this, [this, i] {
 			auto scenes = engine_.Scenes();
-			if (i < (int)scenes.size()) {
-				engine_.SetPreview(scenes[i]);
-				RefreshBusState();
-			}
+			if (i < (int)scenes.size())
+				SelectScene(scenes[i]->uid);
 		});
 	}
 	auto onKey = [this](int key, void (MainWindow::*fn)()) {
@@ -700,81 +727,167 @@ void MainWindow::SetupShortcuts()
 	onKey(Qt::Key_Space, &MainWindow::DoAuto);
 	onKey(Qt::Key_Return, &MainWindow::DoCut);
 	onKey(Qt::Key_Enter, &MainWindow::DoCut);
-	for (int i = 0; kOverlayKeys[i]; i++) {
-		auto *sc = new QShortcut(QKeySequence(QString(QLatin1Char(kOverlayKeys[i]))), this);
-		connect(sc, &QShortcut::activated, this, [this, i] {
-			if (TypingFocus())
-				return;
-			const auto &ovs = engine_.Overlays();
-			if (i < (int)ovs.size()) {
-				engine_.ToggleOverlay(ovs[i]->uid, directSend_->isChecked());
-				RefreshOverlayButtons();
-			}
-		});
-	}
 }
 
 // ---------------------------------------------------------------- 訊號源
 
-void MainWindow::RebuildBus()
+Input *MainWindow::CurrentScene()
 {
-	while (QLayoutItem *it = busLayout_->takeAt(0)) {
-		delete it->widget();
-		delete it;
+	Input *in = engine_.FindInput(currentScene_);
+	if (in && in->isScene)
+		return in;
+	Input *pvw = engine_.Preview();
+	if (pvw && pvw->isScene) {
+		currentScene_ = pvw->uid;
+		return pvw;
 	}
-	int n = 0;
-	for (Input *in : engine_.VideoInputs()) {
+	Input *pgm = engine_.Program();
+	if (pgm && pgm->isScene) {
+		currentScene_ = pgm->uid;
+		return pgm;
+	}
+	auto scenes = engine_.Scenes();
+	if (!scenes.empty()) {
+		currentScene_ = scenes.front()->uid;
+		return scenes.front();
+	}
+	currentScene_.clear();
+	return nullptr;
+}
+
+Input *MainWindow::EnsureScene()
+{
+	if (Input *sc = CurrentScene())
+		return sc;
+	Input *sc = engine_.CreateScene(engine_.NextSceneName());
+	if (!sc)
+		return nullptr;
+	if (!engine_.Preview() && engine_.Program() != sc)
+		engine_.SetPreview(sc);
+	currentScene_ = sc->uid;
+	RebuildScenes();
+	return sc;
+}
+
+void MainWindow::SelectScene(const std::string &uid)
+{
+	Input *sc = engine_.FindInput(uid);
+	if (!sc || !sc->isScene)
+		return;
+	currentScene_ = uid;
+	// 播出中的場景只選取（下面可以直接開關它的內容），其他場景放到預覽
+	if (engine_.Program() != sc)
+		engine_.SetPreview(sc);
+	rowSig_.clear();
+	RefreshBusState();
+}
+
+void MainWindow::ToggleLayer(int64_t layerId)
+{
+	Input *sc = CurrentScene();
+	if (!sc)
+		return;
+	engine_.SetLayerVisible(sc, layerId, !engine_.LayerVisible(sc, layerId));
+	RefreshBusState();
+	ScheduleSave();
+}
+
+void MainWindow::ShowLayerMenu(QWidget *anchor, const QPoint &pos, const LayerInfo &layer)
+{
+	Input *sc = CurrentScene();
+	if (!sc)
+		return;
+	QMenu m;
+	m.addSection(Q(layer.name));
+	QAction *edit = m.addAction(layer.isOverlay ? QStringLiteral("編輯設計…") : QStringLiteral("訊號源設定…"));
+	QAction *reset = m.addAction(layer.isOverlay ? QStringLiteral("回到預設位置") : QStringLiteral("填滿畫面"));
+	m.addSeparator();
+	QAction *top = m.addAction(QStringLiteral("移到最上層"));
+	QAction *bottom = m.addAction(QStringLiteral("移到最下層"));
+	m.addSeparator();
+	QAction *remove = m.addAction(QStringLiteral("從這個場景移除"));
+	QAction *chosen = m.exec(anchor->mapToGlobal(pos));
+	const int64_t id = layer.id;
+	const std::string uid = layer.uid;
+	const bool isOverlay = layer.isOverlay;
+	QTimer::singleShot(0, this, [this, chosen, edit, reset, top, bottom, remove, id, uid, isOverlay] {
+		Input *scene = CurrentScene();
+		if (!chosen || !scene)
+			return;
+		if (chosen == edit)
+			isOverlay ? EditOverlay(uid) : EditSource(uid);
+		else if (chosen == reset)
+			engine_.LayerResetIn(scene, id);
+		else if (chosen == top)
+			engine_.LayerOrderIn(scene, id, OBS_ORDER_MOVE_TOP);
+		else if (chosen == bottom)
+			engine_.LayerOrderIn(scene, id, OBS_ORDER_MOVE_BOTTOM);
+		else if (chosen == remove)
+			engine_.LayerRemoveIn(scene, id);
+		rowSig_.clear();
+		RefreshBusState();
+		ScheduleSave();
+	});
+}
+
+void MainWindow::RebuildRows()
+{
+	for (QHBoxLayout *lay : {busLayout_, ovlLayout_}) {
+		while (QLayoutItem *it = lay->takeAt(0)) {
+			delete it->widget();
+			delete it;
+		}
+	}
+	Input *sc = CurrentScene();
+	const QString sceneName = sc ? Q(sc->name) : QStringLiteral("（還沒有場景）");
+	busGroup_->setTitle(QStringLiteral("「%1」的訊號源　（點一下顯示／隱藏，1–9 快捷鍵；右鍵更多）").arg(sceneName));
+	ovlGroup_->setTitle(QStringLiteral("「%1」的疊加 OVL　（點一下顯示／隱藏，Q W E R T Y 快捷鍵；右鍵更多）").arg(sceneName));
+
+	int nSrc = 0, nOvl = 0;
+	for (const auto &l : engine_.SceneLayers(sc)) {
+		const bool ov = l.isOverlay;
+		int &n = ov ? nOvl : nSrc;
+		QString key;
+		if (!ov && n < 9)
+			key = QString::number(n + 1);
+		if (ov && n < (int)std::strlen(kOverlayKeys))
+			key = QString(QLatin1Char(kOverlayKeys[n]));
 		n++;
-		const QString label = in->isScene ? QStringLiteral("▦ ") + Q(in->name) : Q(in->name);
-		auto *b = new QPushButton(QStringLiteral("%1\n%2").arg(n <= 9 ? QString::number(n) : QString(), label));
-		b->setToolTip(in->isScene ? QStringLiteral("畫面組合：放到預覽後可以拖曳、縮放裡面的每一層")
-					  : QStringLiteral("點一下放到預覽；Shift＋點一下疊加到預覽畫面"));
-		b->setObjectName(QStringLiteral("busButton"));
-		b->setProperty("uid", Q(in->uid));
-		b->setMinimumSize(128, 62);
-		b->setMaximumWidth(200);
+		auto *b = new QPushButton(ov ? (key.isEmpty() ? Q(l.name) : QStringLiteral("%1  %2").arg(key, Q(l.name)))
+					     : QStringLiteral("%1\n%2").arg(key, Q(l.name)));
+		b->setObjectName(ov ? QStringLiteral("ovlButton") : QStringLiteral("busButton"));
+		b->setProperty("layer", QVariant::fromValue<qlonglong>(l.id));
+		b->setMinimumSize(ov ? 90 : 128, ov ? 38 : 62);
+		if (!ov)
+			b->setMaximumWidth(220);
 		b->setFocusPolicy(Qt::NoFocus);
 		b->setContextMenuPolicy(Qt::CustomContextMenu);
-		const std::string uid = in->uid;
-		connect(b, &QPushButton::clicked, this, [this, uid] {
-			if (QApplication::keyboardModifiers() & Qt::ShiftModifier) {
-				ComposeSource(uid);
-				return;
-			}
-			engine_.SetPreview(engine_.FindInput(uid));
-			RefreshBusState();
-		});
-		connect(b, &QPushButton::customContextMenuRequested, this, [this, b, uid](const QPoint &pos) {
-			QMenu m;
-			Input *cur = engine_.FindInput(uid);
-			const bool isScene = cur && cur->isScene;
-			QAction *compose = isScene ? nullptr : m.addAction(QStringLiteral("疊加到預覽畫面（子母畫面）"));
-			QAction *props = isScene ? nullptr : m.addAction(QStringLiteral("設定…"));
-			QAction *rename = m.addAction(QStringLiteral("重新命名…"));
-			m.addSeparator();
-			QAction *remove = m.addAction(QStringLiteral("移除"));
-			QAction *chosen = m.exec(b->mapToGlobal(pos));
-			// 選單關閉後才處理，避免在按鈕自己的事件裡把按鈕刪掉
-			if (!chosen)
-				return;
-			if (chosen == compose)
-				QTimer::singleShot(0, this, [this, uid] { ComposeSource(uid); });
-			else if (chosen == props)
-				QTimer::singleShot(0, this, [this, uid] { EditSource(uid); });
-			else if (chosen == rename)
-				QTimer::singleShot(0, this, [this, uid] { RenameSource(uid); });
-			else if (chosen == remove)
-				QTimer::singleShot(0, this, [this, uid] { RemoveSource(uid); });
-		});
-		busLayout_->addWidget(b);
+		b->setToolTip(QStringLiteral("點一下在這個場景裡顯示／隱藏"));
+		const int64_t id = l.id;
+		const LayerInfo info = l;
+		connect(b, &QPushButton::clicked, this, [this, id] { ToggleLayer(id); });
+		connect(b, &QPushButton::customContextMenuRequested, this,
+			[this, b, info](const QPoint &pos) { ShowLayerMenu(b, pos, info); });
+		(ov ? ovlLayout_ : busLayout_)->addWidget(b);
 	}
-	if (n == 0) {
-		auto *hint = new QLabel(
-			QStringLiteral("還沒有影像訊號源。按右邊「＋ 新增訊號源」加入攝影機、擷取卡、螢幕或網路影片。"));
+	if (nSrc == 0) {
+		auto *hint = new QLabel(sc ? QStringLiteral("這個場景還沒有訊號源。按右邊「＋ 新增訊號源」或「＋ 加入既有」。")
+					   : QStringLiteral("按「＋ 新增訊號源」開始（會自動建立第一個場景）。"));
 		hint->setObjectName(QStringLiteral("hint"));
 		busLayout_->addWidget(hint);
 	}
+	if (nOvl == 0) {
+		auto *hint = new QLabel(QStringLiteral("這個場景還沒有疊加。按右邊「＋ 新增疊加」加入台標、姓名條、跑馬燈或時鐘。"));
+		hint->setObjectName(QStringLiteral("hint"));
+		ovlLayout_->addWidget(hint);
+	}
 	busLayout_->addStretch(1);
+	ovlLayout_->addStretch(1);
+}
+
+void MainWindow::RebuildBus()
+{
+	rowSig_.clear();
 	RefreshBusState();
 }
 
@@ -789,7 +902,7 @@ void MainWindow::RebuildScenes()
 		it->setData(Qt::UserRole, Q(sc->uid));
 		it->setSizeHint(QSize(142, 48));
 		it->setTextAlignment(Qt::AlignCenter);
-		it->setToolTip(QStringLiteral("點一下放到預覽；右鍵可加入訊號源、改名、複製、刪除"));
+		it->setToolTip(QStringLiteral("點一下放到預覽並顯示這個場景的內容；右鍵可改名、複製、刪除"));
 		sceneList_->addItem(it);
 	}
 	if (n == 0) {
@@ -798,12 +911,16 @@ void MainWindow::RebuildScenes()
 		it->setSizeHint(QSize(300, 48));
 		sceneList_->addItem(it);
 	}
+	rowSig_.clear();
 	RefreshBusState();
 }
 
 void MainWindow::RefreshBusState()
 {
 	const Input *pvw = engine_.Preview(), *pgm = engine_.Program();
+	Input *cur = CurrentScene();
+
+	// 場景列：綠＝預覽、紅＝播出；目前場景加上 ▶
 	for (int i = 0; i < sceneList_->count(); i++) {
 		QListWidgetItem *it = sceneList_->item(i);
 		const std::string uid = S(it->data(Qt::UserRole).toString());
@@ -816,23 +933,57 @@ void MainWindow::RefreshBusState()
 			bg = QColor(30, 142, 78);
 		it->setBackground(bg);
 		it->setForeground(Qt::white);
+		QFont f = it->font();
+		f.setBold(cur && cur->uid == uid);
+		it->setFont(f);
+		Input *sc = engine_.FindInput(uid);
+		int n = 0;
+		for (Input *s2 : engine_.Scenes()) {
+			n++;
+			if (s2 == sc)
+				break;
+		}
+		const QString key = n <= 12 ? QStringLiteral("F%1  ").arg(n) : QString();
+		const QString text = (cur && cur->uid == uid ? QStringLiteral("▶ ") : QString()) + key + (sc ? Q(sc->name) : QString());
+		if (it->text() != text)
+			it->setText(text);
 	}
+
+	// 目前場景的內容有變（新增、移除、改名、換場景）就重建下面兩列
+	QString sig = cur ? Q(cur->uid) : QString();
+	const auto layers = engine_.SceneLayers(cur);
+	for (const auto &l : layers)
+		sig += QStringLiteral("|%1:%2").arg(l.id).arg(Q(l.name));
+	if (sig != rowSig_) {
+		rowSig_ = sig;
+		RebuildRows();
+	}
+
+	// 按鈕顏色：隱藏＝灰；顯示中＝綠（場景在預覽）或紅（場景播出中）
+	const bool live = cur && pgm == cur;
+	for (QHBoxLayout *lay : {busLayout_, ovlLayout_}) {
+		for (int i = 0; i < lay->count(); i++) {
+			auto *b = qobject_cast<QPushButton *>(lay->itemAt(i)->widget());
+			if (!b)
+				continue;
+			const int64_t id = b->property("layer").toLongLong();
+			QString state;
+			if (engine_.LayerVisible(cur, id))
+				state = live ? QStringLiteral("pgm") : QStringLiteral("pvw");
+			if (b->property("state").toString() != state) {
+				b->setProperty("state", state);
+				Repolish(b);
+			}
+		}
+	}
+	if (live)
+		ovlGroup_->setToolTip(QStringLiteral("這個場景正在播出：開關會立即反映在播出畫面"));
+	else
+		ovlGroup_->setToolTip(QString());
+
 	const bool withdraw = engine_.WillWithdraw();
 	cutButton_->setText(withdraw ? QStringLiteral("撤回 CUT") : QStringLiteral("送出 CUT"));
 	autoButton_->setText(withdraw ? QStringLiteral("撤回 AUTO") : QStringLiteral("送出 AUTO"));
-	for (int i = 0; i < busLayout_->count(); i++) {
-		auto *b = qobject_cast<QPushButton *>(busLayout_->itemAt(i)->widget());
-		if (!b)
-			continue;
-		const std::string uid = S(b->property("uid").toString());
-		const QString state = pgm && pgm->uid == uid   ? QStringLiteral("pgm")
-				      : pvw && pvw->uid == uid ? QStringLiteral("pvw")
-							       : QString();
-		if (b->property("state").toString() != state) {
-			b->setProperty("state", state);
-			Repolish(b);
-		}
-	}
 }
 
 void MainWindow::RebuildSourceList()
@@ -990,8 +1141,10 @@ void MainWindow::AddSourceOfType(const QString &kind)
 		QMessageBox::warning(this, windowTitle(), QStringLiteral("無法建立這個訊號源（這台電腦可能不支援）。"));
 		return;
 	}
-	if (!in->audioOnly && !engine_.Preview())
-		engine_.SetPreview(in);
+	if (!in->audioOnly) {
+		if (Input *scene = EnsureScene())
+			engine_.AddSourceToScene(scene, in); // 新的影像訊號源直接放進目前場景
+	}
 	SourcesChanged();
 	if (openProps)
 		EditSource(in->uid);
@@ -1013,44 +1166,38 @@ void MainWindow::ComposeSource(const std::string &uid)
 	Input *src = engine_.FindInput(uid);
 	if (!src || src->audioOnly || src->isScene)
 		return;
-	Input *before = engine_.Preview();
-	const size_t countBefore = engine_.Inputs().size();
-	Input *scene = engine_.ComposeOnPreview(src);
+	Input *scene = EnsureScene();
 	if (!scene)
 		return;
-	if (engine_.Inputs().size() != countBefore || before != scene)
-		RebuildScenes(); // 自動建立了新的場景
+	engine_.AddSourceToScene(scene, src);
+	rowSig_.clear();
 	RebuildSourceList();
 	RefreshBusState();
 	ScheduleSave();
-	if (outputStatus_)
-		outputStatus_->setText(QStringLiteral("已把「%1」疊到「%2」。在預覽裡拖曳移動、拖四個角縮放，右鍵可調整圖層順序。")
-					       .arg(Q(src->name), Q(scene->name)));
 }
 
 void MainWindow::NewScene()
 {
-	Input *base = engine_.Preview();
 	Input *scene = engine_.CreateScene(engine_.NextSceneName());
 	if (!scene)
 		return;
-	engine_.SetPreview(scene);
-	// 預覽原本是單一訊號源：拿它當新場景的底圖（填滿畫面）
-	if (base && !base->isScene)
-		engine_.ComposeOnPreview(base);
 	SourcesChanged();
+	SelectScene(scene->uid);
 	if (outputStatus_)
-		outputStatus_->setText(QStringLiteral("已新增「%1」。用「⧉ 加入訊號源」或 Shift＋點訊號源，把畫面放進這個場景。")
+		outputStatus_->setText(QStringLiteral("已新增「%1」。用下面的「＋ 新增訊號源」「＋ 新增疊加」把內容放進這個場景。")
 					       .arg(Q(scene->name)));
 }
 
-void MainWindow::AddSourceToScene(const std::string &sceneUid, const std::string &sourceUid)
+void MainWindow::AddOverlayToCurrentScene(const std::string &overlayUid)
 {
-	Input *scene = engine_.FindInput(sceneUid);
-	if (!scene || !scene->isScene)
+	Overlay *ov = engine_.FindOverlay(overlayUid);
+	Input *scene = EnsureScene();
+	if (!ov || !scene)
 		return;
-	engine_.SetPreview(scene);
-	ComposeSource(sourceUid);
+	engine_.AddOverlayToScene(scene, ov);
+	rowSig_.clear();
+	RefreshBusState();
+	ScheduleSave();
 }
 
 void MainWindow::RenameSource(const std::string &uid)
@@ -1085,52 +1232,13 @@ void MainWindow::RemoveSource(const std::string &uid)
 
 void MainWindow::RebuildOverlayButtons()
 {
-	while (QLayoutItem *it = ovlLayout_->takeAt(0)) {
-		delete it->widget();
-		delete it;
-	}
-	int i = 0;
-	for (const auto &ov : engine_.Overlays()) {
-		const QString key = (i < 10) ? QString(QLatin1Char(kOverlayKeys[i])) : QString();
-		auto *b = new QPushButton(key.isEmpty() ? Q(ov->name) : QStringLiteral("%1  %2").arg(key, Q(ov->name)));
-		b->setObjectName(QStringLiteral("ovlButton"));
-		b->setProperty("uid", Q(ov->uid));
-		b->setMinimumHeight(38);
-		b->setFocusPolicy(Qt::NoFocus);
-		const std::string uid = ov->uid;
-		connect(b, &QPushButton::clicked, this, [this, uid] {
-			engine_.ToggleOverlay(uid, directSend_->isChecked());
-			RefreshOverlayButtons();
-		});
-		ovlLayout_->addWidget(b);
-		i++;
-	}
-	if (i == 0) {
-		auto *hint = new QLabel(QStringLiteral("到右邊「疊加素材」新增台標、姓名條、跑馬燈或時鐘。"));
-		hint->setObjectName(QStringLiteral("hint"));
-		ovlLayout_->addWidget(hint);
-	}
-	ovlLayout_->addStretch(1);
-	RefreshOverlayButtons();
+	rowSig_.clear();
+	RefreshBusState();
 }
 
 void MainWindow::RefreshOverlayButtons()
 {
-	for (int i = 0; i < ovlLayout_->count(); i++) {
-		auto *b = qobject_cast<QPushButton *>(ovlLayout_->itemAt(i)->widget());
-		if (!b)
-			continue;
-		Overlay *ov = engine_.FindOverlay(S(b->property("uid").toString()));
-		if (!ov)
-			continue;
-		const QString state = ov->state == OverlayState::Program   ? QStringLiteral("pgm")
-				      : ov->state == OverlayState::Preview ? QStringLiteral("pvw")
-									   : QString();
-		if (b->property("state").toString() != state) {
-			b->setProperty("state", state);
-			Repolish(b);
-		}
-	}
+	RefreshBusState();
 }
 
 void MainWindow::RebuildOverlayList()
@@ -1182,6 +1290,8 @@ void MainWindow::AddOverlayOfKind(const QString &kind)
 		QMessageBox::warning(this, windowTitle(), QStringLiteral("無法建立這個疊加素材。"));
 		return;
 	}
+	if (Input *scene = EnsureScene())
+		engine_.AddOverlayToScene(scene, ov); // 新的疊加直接放進目前場景
 	RebuildOverlayButtons();
 	RebuildOverlayList();
 	ScheduleSave();
@@ -1510,9 +1620,6 @@ void MainWindow::LoadSettings()
 	// main.cpp 已依這個設定啟動視訊，這裡只同步畫面上的選項
 	appliedFpsIndex_ = std::clamp(st.value("output/fpsIndex", 3).toInt(), 0, kFpsCount - 1);
 	fpsBox_->setCurrentIndex(appliedFpsIndex_);
-	directSend_->blockSignals(true);
-	directSend_->setChecked(st.value("ui/directSend", false).toBool());
-	directSend_->blockSignals(false);
 	restoreGeometry(st.value("window/geometry").toByteArray());
 }
 
@@ -1524,7 +1631,6 @@ void MainWindow::SaveSettings()
 	st.setValue("output/lowLatency", lowLatencyBox_->isChecked());
 	st.setValue("output/dynBitrate", dynBitrateBox_->isChecked());
 	st.setValue("output/fpsIndex", appliedFpsIndex_);
-	st.setValue("ui/directSend", directSend_->isChecked());
 }
 
 void MainWindow::closeEvent(QCloseEvent *event)

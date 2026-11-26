@@ -43,6 +43,15 @@ struct EditTarget {
 	bool operator!=(const EditTarget &o) const { return !(*this == o); }
 };
 
+// 場景裡的一層（給「場景內容」面板用），由上到下排列
+struct LayerInfo {
+	int64_t id = 0;
+	std::string uid; // 訊號源或疊加素材的 uid
+	std::string name;
+	bool visible = true;
+	bool isOverlay = false;
+};
+
 struct CanvasRect {
 	float x0 = 0, y0 = 0, x1 = 0, y1 = 0;
 };
@@ -131,6 +140,16 @@ public:
 	Input *ComposeOnPreview(Input *src);
 	std::string NextSceneName() const;
 	Input *DuplicateScene(const std::string &uid);
+	// 把疊加素材加進場景（場景送出時一起上播出、撤回時一起撤回）
+	obs_sceneitem_t *AddOverlayToScene(Input *scene, Overlay *ov);
+	std::vector<LayerInfo> SceneLayers(Input *scene) const;
+	void SetLayerVisible(Input *scene, int64_t layerId, bool visible);
+	bool LayerVisible(Input *scene, int64_t layerId) const;
+	obs_sceneitem_t *AddSourceToScene(Input *scene, Input *src);
+	void LayerOrderIn(Input *scene, int64_t layerId, obs_order_movement movement);
+	void LayerResetIn(Input *scene, int64_t layerId); // 訊號源＝填滿畫面；疊加＝回到預設位置
+	void LayerRemoveIn(Input *scene, int64_t layerId);
+	Overlay *OverlayBySource(obs_source_t *source) const;
 
 	// ---------- 切換 ----------
 	void SetPreview(Input *in);
