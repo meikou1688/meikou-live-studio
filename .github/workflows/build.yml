@@ -1,0 +1,238 @@
+name: Build
+
+on:
+  push:
+    branches: [main]
+    paths-ignore:
+      - "docs/**"
+      - "**.md"
+  workflow_dispatch:
+
+concurrency:
+  group: build-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: write
+
+env:
+  MEIKOU_VERSION: 2.0.0-m2.${{ github.run_number }}
+  MEIKOU_VIVERSION: 2.0.0.${{ github.run_number }}
+  OBS_TAG: 33.0.3
+
+jobs:
+  windows:
+    name: Windows x64
+    runs-on: windows-2025-vs2026
+    timeout-minutes: 180
+    defaults:
+      run:
+        shell: pwsh
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+          fetch-depth: 1
+
+      - name: Fetch OBS version tag (git describe needs it)
+        run: git -C obs-studio fetch --depth=1 origin "refs/tags/${env:OBS_TAG}:refs/tags/${env:OBS_TAG}"
+
+      - name: Restore OBS dependencies
+        uses: actions/cache@v4
+        with:
+          path: obs-studio/.deps
+          key: obs-deps-windows-x64-${{ hashFiles('obs-studio/CMakePresets.json') }}
+
+      - name: Hook Meikou into the OBS build
+        run: |
+          $f = 'obs-studio/CMakeLists.txt'
+          $c = Get-Content $f -Raw
+          if ($c -notmatch 'meikou') {
+            $line = 'add_subdirectory("${CMAKE_CURRENT_SOURCE_DIR}/../meikou" meikou)'
+            $c = $c.Replace('add_subdirectory(frontend)', "add_subdirectory(frontend)`n$line")
+            Set-Content -Path $f -Value $c -NoNewline
+          }
+          Select-String -Path $f -Pattern 'meikou'
+
+      - name: Install MSVC 14.44 ATL (same as OBS CI)
+        run: |
+          $vswhere = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe"
+          $vsPath = & $vswhere -latest -property installationPath
+          $installer = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vs_installer.exe"
+          $argList = "modify --installPath `"$vsPath`" --add Microsoft.VisualStudio.Component.VC.14.44.17.14.ATL --quiet --norestart --nocache"
+          $proc = Start-Process -FilePath $installer -ArgumentList $argList -Wait -PassThru
+          if ($proc.ExitCode -notin 0, 3010) { throw "bad exit code: $($proc.ExitCode)" }
+          if (-not (Test-Path -Path "$vsPath\VC\Tools\MSVC\14.44*\atlmfc\include\atlbase.h")) { throw "ATL header not found" }
+
+      - name: Configure
+        working-directory: obs-studio
+        run: >
+          cmake --preset windows-x64
+          "-DENABLE_FRONTEND=OFF"
+          "-DENABLE_BROWSER=OFF"
+          "-DENABLE_SCRIPTING=OFF"
+          "-DENABLE_WEBSOCKET=OFF"
+          "-DENABLE_AJA=OFF"
+          "-DENABLE_VST=OFF"
+          "-DENABLE_CCACHE=OFF"
+          "-DOBS_VERSION_OVERRIDE=$env:OBS_TAG"
+          "-DMEIKOU_VERSION=$env:MEIKOU_VERSION"
+
+      - name: Build
+        working-directory: obs-studio
+        run: cmake --build build_x64 --config RelWithDebInfo --parallel
+
+      - name: Package (one-click installer + portable zip)
+        run: |
+          $rundir = Resolve-Path 'obs-studio/build_x64/rundir/RelWithDebInfo'
+          if (-not (Test-Path "$rundir/bin/64bit/meikou-live-studio.exe")) { throw 'meikou-live-studio.exe not found' }
+          New-Item -ItemType Directory -Force out | Out-Null
+          $stage = Join-Path $env:RUNNER_TEMP 'meikou-portable'
+          robocopy $rundir $stage /E /XF *.pdb *.lib *.exp /NFL /NDL /NJH /NJS
+          if ($LASTEXITCODE -ge 8) { throw "robocopy failed $LASTEXITCODE" }
+          $global:LASTEXITCODE = 0
+          # 一起附上 Visual C++ 執行階段，沒裝過 VC++ 可轉散發套件的電腦也能直接執行
+          $vsPath = & "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe" -latest -property installationPath
+          $crt = Get-ChildItem "$vsPath\VC\Redist\MSVC\*\x64\Microsoft.VC14*.CRT" -Directory | Sort-Object FullName -Descending | Select-Object -First 1
+          if (-not $crt) { throw 'VC runtime not found' }
+          Copy-Item "$($crt.FullName)\*.dll" "$stage\bin\64bit\" -Force
+          Compress-Archive -Path "$stage/*" -DestinationPath "out/MeikouLiveStudio-$env:MEIKOU_VERSION-Windows-x64-portable.zip"
+          choco install nsis -y --no-progress
+          $makensis = 'C:\Program Files (x86)\NSIS\makensis.exe'
+          $outfile = (Join-Path (Resolve-Path out) "MeikouLiveStudio-$env:MEIKOU_VERSION-Windows-x64-Setup.exe")
+          & $makensis /V2 "/DVERSION=$env:MEIKOU_VERSION" "/DVIVERSION=$env:MEIKOU_VIVERSION" "/DSRCDIR=$stage" "/DOUTFILE=$outfile" installer/meikou.nsi
+          if ($LASTEXITCODE -ne 0) { throw "makensis failed $LASTEXITCODE" }
+          Get-ChildItem out | Format-Table Name, Length
+
+      - name: Upload
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows
+          path: out/*
+          retention-days: 14
+
+  macos:
+    name: macOS (Apple Silicon)
+    runs-on: macos-26
+    timeout-minutes: 180
+    defaults:
+      run:
+        shell: zsh --no-rcs --errexit --pipefail {0}
+    env:
+      CODESIGN_IDENT: "-"
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+          fetch-depth: 1
+
+      - name: Fetch OBS version tag (git describe needs it)
+        run: git -C obs-studio fetch --depth=1 origin "refs/tags/${OBS_TAG}:refs/tags/${OBS_TAG}"
+
+      - name: Select Xcode
+        run: |
+          local xcode=/Applications/Xcode_26.5.app
+          if [[ -d ${xcode} ]] sudo xcode-select --switch ${xcode}/Contents/Developer
+          xcodebuild -version
+
+      - name: Restore OBS dependencies
+        uses: actions/cache@v4
+        with:
+          path: obs-studio/.deps
+          key: obs-deps-macos-arm64-${{ hashFiles('obs-studio/CMakePresets.json', 'obs-studio/buildspec.json') }}
+
+      - name: Hook Meikou into the OBS build
+        run: |
+          local f=obs-studio/CMakeLists.txt
+          if ! grep -q meikou ${f}; then
+            perl -0pi -e 's|add_subdirectory\(frontend\)|add_subdirectory(frontend)\nadd_subdirectory("\${CMAKE_CURRENT_SOURCE_DIR}/../meikou" meikou)|' ${f}
+          fi
+          grep -n meikou ${f}
+
+      - name: Configure
+        working-directory: obs-studio
+        run: |
+          cmake --preset macos \
+            -DCMAKE_OSX_ARCHITECTURES:STRING=arm64 \
+            -DENABLE_FRONTEND:BOOL=OFF \
+            -DENABLE_BROWSER:BOOL=OFF \
+            -DENABLE_SCRIPTING:BOOL=OFF \
+            -DENABLE_WEBSOCKET:BOOL=OFF \
+            -DENABLE_AJA:BOOL=OFF \
+            -DENABLE_VST:BOOL=OFF \
+            -DENABLE_VIRTUALCAM:BOOL=OFF \
+            -DENABLE_SYPHON:BOOL=OFF \
+            -DSPARKLE_APPCAST_URL:STRING= \
+            -DSPARKLE_PUBLIC_KEY:STRING= \
+            -DOBS_VERSION_OVERRIDE:STRING=${OBS_TAG} \
+            -DMEIKOU_VERSION:STRING=${MEIKOU_VERSION}
+
+      - name: Build
+        working-directory: obs-studio/build_macos
+        run: |
+          xcodebuild ONLY_ACTIVE_ARCH=NO \
+            -project obs-studio.xcodeproj \
+            -target obs-studio \
+            -destination "generic/platform=macOS,name=Any Mac" \
+            -configuration RelWithDebInfo \
+            -parallelizeTargets \
+            -hideShellScriptEnvironment \
+            -quiet \
+            build
+
+      - name: Package (.pkg installer + zip)
+        run: |
+          local app=$(find obs-studio/build_macos/meikou -maxdepth 3 -name '*.app' -type d | head -n 1)
+          if [[ -z ${app} ]] { print 'app bundle not found'; find obs-studio/build_macos -maxdepth 4 -name '*.app'; exit 1 }
+          print "App: ${app}"
+          mkdir -p stage out
+          ditto ${app} "stage/Meikou Live Studio.app"
+          local bundle="stage/Meikou Live Studio.app"
+          print '--- PlugIns'; ls "${bundle}/Contents/PlugIns" | head -50
+          print '--- Frameworks'; ls "${bundle}/Contents/Frameworks" | head -50
+          # 沒有 Apple 開發者憑證，用 ad-hoc 簽章讓 Apple Silicon 可以執行
+          codesign --force --deep --sign - --entitlements meikou/cmake/macos/entitlements.plist "${bundle}"
+          codesign --verify --deep --strict "${bundle}" && print 'codesign OK'
+          # 一鍵安裝的 .pkg：裝到「應用程式」資料夾
+          pkgbuild --analyze --root stage component.plist
+          plutil -replace 0.BundleIsRelocatable -bool NO component.plist
+          pkgbuild --root stage --component-plist component.plist \
+            --identifier com.meikou.live-studio --version ${MEIKOU_VERSION%%-*} \
+            --install-location /Applications \
+            "out/MeikouLiveStudio-${MEIKOU_VERSION}-macOS-AppleSilicon.pkg"
+          ditto -c -k --keepParent "${bundle}" "out/MeikouLiveStudio-${MEIKOU_VERSION}-macOS-AppleSilicon.zip"
+          ls -la out
+
+      - name: Upload
+        uses: actions/upload-artifact@v4
+        with:
+          name: macos
+          path: out/*
+          retention-days: 14
+
+  release:
+    name: Publish pre-release
+    needs: [windows, macos]
+    if: ${{ always() && (needs.windows.result == 'success' || needs.macos.result == 'success') }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+      - name: Create release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          ls -la dist
+          notes="Meikou Live Studio ${MEIKOU_VERSION}（commit ${GITHUB_SHA::7}）
+          - Windows：下載 *-Windows-x64-Setup.exe，點兩下就會自動安裝並開啟。zip 為免安裝版。
+          - macOS（Apple Silicon M 系列晶片）：下載 *-macOS-AppleSilicon.pkg，點兩下安裝到「應用程式」。
+            第一次打開若出現「無法驗證開發者」，到「系統設定 → 隱私權與安全性」按「強制打開」。"
+          gh release create "v${MEIKOU_VERSION}" dist/* --prerelease \
+            --title "Meikou Live Studio ${MEIKOU_VERSION}" --notes "$notes" --target "${GITHUB_SHA}"

@@ -1,5 +1,5 @@
 ; Meikou Live Studio 2（libobs 原生版）安裝程式
-; 由 CI 呼叫：makensis /DVERSION=2.0.0-m0.1 /DVIVERSION=2.0.0.1 /DSRCDIR=<rundir> /DOUTFILE=<exe> installer\meikou.nsi
+; 由 CI 呼叫：makensis /DVERSION=2.0.0-m2.1 /DVIVERSION=2.0.0.1 /DSRCDIR=<rundir> /DOUTFILE=<exe> installer\meikou.nsi
 Unicode true
 ManifestDPIAware true
 !include "MUI2.nsh"
@@ -36,16 +36,13 @@ VIAddVersionKey /LANG=1028 "ProductVersion" "${VERSION}"
 
 !define MUI_ICON "..\meikou\resources\meikou.ico"
 !define MUI_UNICON "..\meikou\resources\meikou.ico"
-!define MUI_ABORTWARNING
-!define MUI_WELCOMEPAGE_TITLE "安裝 ${APPNAME} ${VERSION}"
-!define MUI_WELCOMEPAGE_TEXT "這是以 OBS 核心（libobs）打造的 Meikou 原生版，和舊的 Electron 版分開安裝，可以同時存在。$\r$\n$\r$\n不需要系統管理員權限。$\r$\n$\r$\n按「下一步」繼續。"
-!define MUI_FINISHPAGE_RUN "$INSTDIR\bin\64bit\${APPEXE}"
-!define MUI_FINISHPAGE_RUN_TEXT "立即開啟 ${APPNAME}"
+; 一鍵自動安裝：不問路徑、不用按下一步，裝好自動開啟（也支援 /S 靜默安裝）
+!define MUI_INSTFILESPAGE_COLORS "FFFFFF 0B1020"
+AutoCloseWindow true
+ShowInstDetails nevershow
+ShowUninstDetails nevershow
 
-!insertmacro MUI_PAGE_WELCOME
-!insertmacro MUI_PAGE_DIRECTORY
 !insertmacro MUI_PAGE_INSTFILES
-!insertmacro MUI_PAGE_FINISH
 !insertmacro MUI_UNPAGE_CONFIRM
 !insertmacro MUI_UNPAGE_INSTFILES
 !insertmacro MUI_LANGUAGE "TradChinese"
@@ -82,6 +79,11 @@ Section "Install"
   ${GetSize} "$INSTDIR" "/S=0K" $0 $1 $2
   IntFmt $0 "0x%08X" $0
   WriteRegDWORD HKCU "${UNINSTKEY}" "EstimatedSize" "$0"
+
+  ; 裝完直接開啟（靜默安裝 /S 時不開）
+  IfSilent +3
+  SetOutPath "$INSTDIR\bin\64bit"
+  Exec '"$INSTDIR\bin\64bit\${APPEXE}"'
 SectionEnd
 
 Section "Uninstall"

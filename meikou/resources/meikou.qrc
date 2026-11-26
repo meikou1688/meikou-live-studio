@@ -1,0 +1,6 @@
+<RCC>
+  <qresource prefix="/meikou">
+    <file alias="logo.png">logo/wordmark-96h.png</file>
+    <file alias="round.png">logo/round-256.png</file>
+  </qresource>
+</RCC>

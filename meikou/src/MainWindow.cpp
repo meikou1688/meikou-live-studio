@@ -221,16 +221,19 @@ QWidget *MainWindow::BuildTopBar()
 	h->setContentsMargins(14, 8, 14, 8);
 	h->setSpacing(14);
 
+	// 頂列放橫式字標（Meikou Live Studio）
 	auto *logo = new QLabel;
 	QPixmap pm(QStringLiteral(":/meikou/logo.png"));
-	if (pm.isNull())
-		pm.load(QCoreApplication::applicationDirPath() + QStringLiteral("/meikou-logo.png"));
-	if (!pm.isNull())
-		logo->setPixmap(pm.scaled(36, 36, Qt::KeepAspectRatio, Qt::SmoothTransformation));
+	if (!pm.isNull()) {
+		const qreal dpr = devicePixelRatioF();
+		QPixmap scaled = pm.scaledToHeight((int)(38 * dpr), Qt::SmoothTransformation);
+		scaled.setDevicePixelRatio(dpr);
+		logo->setPixmap(scaled);
+	} else {
+		logo->setText(QStringLiteral("Meikou Live Studio"));
+		logo->setObjectName(QStringLiteral("brand"));
+	}
 	h->addWidget(logo);
-	auto *title = new QLabel(QStringLiteral("MEIKOU <span style='color:#a78bfa'>LIVE</span> STUDIO"));
-	title->setObjectName(QStringLiteral("brand"));
-	h->addWidget(title);
 	h->addSpacing(16);
 
 	liveLabel_ = new QLabel(QStringLiteral("● 未直播"));
@@ -730,6 +733,9 @@ void MainWindow::AddSourceOfType(const QString &kind)
 	} else if (kind == QLatin1String("window")) {
 		type = platform::kWindow;
 		name = "視窗擷取 " + countOf(type);
+#ifdef __APPLE__
+		obs_data_set_int(s, "type", 1); // ScreenCaptureKit：單一視窗
+#endif
 	} else if (kind == QLatin1String("game")) {
 		type = platform::kGame ? platform::kGame : "";
 		name = "遊戲擷取 " + countOf(type);
@@ -807,9 +813,15 @@ void MainWindow::AddSourceOfType(const QString &kind)
 		type = platform::kAudioOut;
 		name = "系統聲音 " + countOf(type);
 		obs_data_set_string(s, "device_id", "default");
+#ifdef __APPLE__
+		obs_data_set_int(s, "type", 0); // ScreenCaptureKit：整台電腦的聲音
+#endif
 	} else if (kind == QLatin1String("app")) {
 		type = platform::kAppAudio;
 		name = "程式聲音 " + countOf(type);
+#ifdef __APPLE__
+		obs_data_set_int(s, "type", 1); // ScreenCaptureKit：只擷取指定應用程式的聲音
+#endif
 	}
 
 	Input *in = type.empty() ? nullptr : engine_.AddInput(type, name, s);

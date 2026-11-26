@@ -5,6 +5,7 @@
 #include <QApplication>
 #include <QDir>
 #include <QFile>
+#include <QIcon>
 #include <QLockFile>
 #include <QMessageBox>
 #include <QPalette>
@@ -17,7 +18,6 @@
 namespace {
 
 const char *kStyle = R"(
-QWidget { font-size: 10pt; }
 QFrame#topBar { background: #12131a; border-bottom: 1px solid #2a2d38; }
 QLabel#brand { font-size: 13pt; font-weight: 700; letter-spacing: 2px; color: #ffffff; }
 QLabel#stats { color: #8a90a0; }
@@ -36,8 +36,8 @@ QPushButton { background: #2a2d38; border: 1px solid #3a3e4c; border-radius: 6px
 QPushButton:hover { background: #343846; }
 QPushButton:pressed { background: #1f2129; }
 QPushButton:disabled { color: #6a6f7c; }
-QPushButton#accent { background: #6d4aff; border-color: #6d4aff; color: white; font-weight: 600; }
-QPushButton#accent:hover { background: #7d5cff; }
+QPushButton#accent { background: #00e5c0; border-color: #00e5c0; color: #06121a; font-weight: 700; }
+QPushButton#accent:hover { background: #3ff0d2; }
 QPushButton#flat { background: transparent; border: none; color: #8a90a0; }
 QPushButton#cut { background: #3a3e4c; font-size: 13pt; font-weight: 800; }
 QPushButton#take { background: #d7263d; border-color: #d7263d; color: white; font-size: 13pt; font-weight: 800; }
@@ -51,7 +51,7 @@ QPushButton#record { background: #3a3e4c; font-size: 12pt; font-weight: 700; }
 QPushButton#record[state="on"] { border-color: #ff4d5e; color: #ff4d5e; }
 QTabWidget::pane { border: 1px solid #2a2d38; }
 QTabBar::tab { background: #1c1e26; padding: 8px 14px; border: 1px solid #2a2d38; border-bottom: none; }
-QTabBar::tab:selected { background: #2a2d38; color: white; }
+QTabBar::tab:selected { background: #2a2d38; color: white; border-bottom: 2px solid #00e5c0; }
 QListWidget, QTableWidget, QLineEdit, QSpinBox, QComboBox { background: #20222b; border: 1px solid #3a3e4c; border-radius: 4px; padding: 3px; }
 QHeaderView::section { background: #1c1e26; border: none; padding: 4px; color: #b8bdc9; }
 )";
@@ -60,7 +60,7 @@ void ApplyDarkTheme(QApplication &app)
 {
 	app.setStyle(QStyleFactory::create(QStringLiteral("Fusion")));
 	QPalette p;
-	const QColor bg(24, 26, 32), panel(32, 35, 43), text(230, 232, 236), accent(109, 74, 255);
+	const QColor bg(24, 26, 32), panel(32, 35, 43), text(230, 232, 236), accent(0, 200, 170);
 	p.setColor(QPalette::Window, bg);
 	p.setColor(QPalette::WindowText, text);
 	p.setColor(QPalette::Base, panel);
@@ -99,6 +99,7 @@ int main(int argc, char *argv[])
 	QApplication::setApplicationName(QStringLiteral("Meikou Live Studio"));
 	QApplication::setApplicationVersion(QString::fromUtf8(MEIKOU_VERSION));
 	ApplyDarkTheme(app);
+	QApplication::setWindowIcon(QIcon(QStringLiteral(":/meikou/round.png")));
 
 	const QString configDir = QStandardPaths::writableLocation(QStandardPaths::AppDataLocation);
 	QDir().mkpath(configDir);
