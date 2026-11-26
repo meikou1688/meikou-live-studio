@@ -72,6 +72,7 @@ struct Target {
 	bool reconnecting = false;
 	// 從按下開始到 libobs 通知「已停止」之前都算使用中（連線中 libobs 還不算 active）
 	std::shared_ptr<std::atomic<bool>> running = std::make_shared<std::atomic<bool>>(false);
+	uint64_t stopRequestNs = 0; // 按下停止的時間，太久沒停就強制停止
 	uint64_t lastBytes = 0;
 	uint64_t lastTime = 0;
 	double kbps = 0.0;
@@ -234,6 +235,8 @@ private:
 	obs_encoder_t *audioEncoder_ = nullptr;
 	obs_output_t *recordOutput_ = nullptr;
 	std::atomic<bool> recordRunning_{false};
+	uint64_t recordStopRequestNs_ = 0;
+	void ForceStopStuckOutputs();
 	std::string recordPath_;
 	uint64_t recordStart_ = 0;
 	uint64_t streamStart_ = 0;

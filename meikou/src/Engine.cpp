@@ -365,6 +365,7 @@ void Engine::Tick()
 		if (ov->kind == "clock" && ov->state != OverlayState::Off)
 			RefreshGraphic(ov.get());
 	}
+	ForceStopStuckOutputs();
 	ReleaseEncodersIfIdle();
 }
 
@@ -1293,6 +1294,7 @@ bool Engine::StartStreaming(const EncodeConfig &cfgIn, std::string &error)
 		t.lastTime = os_gettime_ns();
 		t.kbps = 0;
 		*t.running = true; // 先標記，start 失敗或停止時再清掉
+		t.stopRequestNs = 0;
 		if (obs_output_start(t.output)) {
 			t.status = "連線中…";
 			started++;
@@ -1311,11 +1313,41 @@ bool Engine::StartStreaming(const EncodeConfig &cfgIn, std::string &error)
 	return true;
 }
 
+// libobs 在輸出「還在啟動／連線中」時會忽略 obs_output_stop，這時改用強制停止
+static void StopOutput(obs_output_t *out)
+{
+	if (obs_output_active(out))
+		obs_output_stop(out);
+	else
+		obs_output_force_stop(out);
+}
+
 void Engine::StopStreaming()
 {
-	for (auto &t : targets_)
-		if (t.output && (*t.running || obs_output_active(t.output)))
-			obs_output_stop(t.output);
+	for (auto &t : targets_) {
+		if (t.output && (*t.running || obs_output_active(t.output))) {
+			t.stopRequestNs = os_gettime_ns();
+			StopOutput(t.output);
+		}
+	}
+}
+
+void Engine::ForceStopStuckOutputs()
+{
+	// 按下停止 8 秒後還沒停（例如編碼器卡住、網路斷掉），強制停止，介面才不會一直卡在「停止中」
+	const uint64_t now = os_gettime_ns(), limit = 8000000000ULL;
+	for (auto &t : targets_) {
+		if (t.output && *t.running && t.stopRequestNs && now - t.stopRequestNs > limit) {
+			blog(LOG_WARNING, "Output for '%s' did not stop in time, forcing stop", t.name.c_str());
+			t.stopRequestNs = 0;
+			obs_output_force_stop(t.output);
+		}
+	}
+	if (recordOutput_ && recordRunning_ && recordStopRequestNs_ && now - recordStopRequestNs_ > limit) {
+		blog(LOG_WARNING, "Recording did not stop in time, forcing stop");
+		recordStopRequestNs_ = 0;
+		obs_output_force_stop(recordOutput_);
+	}
 }
 
 bool Engine::Streaming() const
@@ -1352,6 +1384,7 @@ bool Engine::StartRecording(const EncodeConfig &cfg, const std::string &path, st
 	signal_handler_connect(sh, "start", OnOutputStart, this);
 	signal_handler_connect(sh, "stop", OnOutputStop, this);
 	recordRunning_ = true;
+	recordStopRequestNs_ = 0;
 	if (!obs_output_start(recordOutput_)) {
 		recordRunning_ = false;
 		const char *le = obs_output_get_last_error(recordOutput_);
@@ -1366,8 +1399,10 @@ bool Engine::StartRecording(const EncodeConfig &cfg, const std::string &path, st
 
 void Engine::StopRecording()
 {
-	if (recordOutput_ && (recordRunning_ || obs_output_active(recordOutput_)))
-		obs_output_stop(recordOutput_);
+	if (recordOutput_ && (recordRunning_ || obs_output_active(recordOutput_))) {
+		recordStopRequestNs_ = os_gettime_ns();
+		StopOutput(recordOutput_);
+	}
 }
 
 bool Engine::Recording() const

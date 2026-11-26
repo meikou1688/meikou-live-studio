@@ -505,6 +505,9 @@ int RunSelfTest(QApplication &app, const QString &configDir, const QString &repo
 			  QStringLiteral("掉格 %1 / %2（%3%）").arg(lagged).arg(total).arg(pct, 0, 'f', 1), true);
 	}
 
+	// 截圖完成，拿掉抓畫面（每格都轉成 RGBA 很吃 CPU，會影響後面的編碼測試）
+	obs_remove_raw_video_callback(FrameGrab::Callback, &grab);
+
 	// ------------------------------------------------ 錄影
 	rep.Section(QStringLiteral("錄影"));
 	auto record = [&](const std::string &encoderId, const QString &label, bool warnOnly) {
@@ -522,8 +525,12 @@ int RunSelfTest(QApplication &app, const QString &configDir, const QString &repo
 		if (!rep.Check(QStringLiteral("開始錄影（%1）").arg(label), ok, QString::fromUtf8(e.c_str()), warnOnly))
 			return;
 		pump(4000);
+		const uint64_t bytesWhileRecording = engine.QueryStats().recordBytes;
+		rep.Check(QStringLiteral("錄影中有寫入資料（%1）").arg(label), bytesWhileRecording > 0,
+			  QStringLiteral("%1 KB").arg(bytesWhileRecording / 1024), warnOnly);
 		engine.StopRecording();
-		waitFor([&] { return !engine.Recording(); }, 10000);
+		rep.Check(QStringLiteral("停止錄影（%1）").arg(label), waitFor([&] { return !engine.Recording(); }, 15000),
+			  QString(), warnOnly);
 		pump(500);
 		const qint64 size = QFileInfo(path).size();
 		rep.Check(QStringLiteral("錄影檔案（%1）").arg(label), size > 200 * 1024, QStringLiteral("%1 KB").arg(size / 1024),
@@ -618,7 +625,6 @@ int RunSelfTest(QApplication &app, const QString &configDir, const QString &repo
 
 	// ------------------------------------------------ 幀率
 	rep.Section(QStringLiteral("輸出設定"));
-	obs_remove_raw_video_callback(FrameGrab::Callback, &grab); // 抓圖也算輸出中，要先拿掉才能改幀率
 	pump(300);
 	std::string fe;
 	const bool fps60 = engine.ResetVideo(60, 1, fe);
