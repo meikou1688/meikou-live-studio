@@ -1,6 +1,7 @@
 // 自動巡檢：meikou-live-studio --selftest --report <json> [--shots <資料夾>] [--rtmp <網址>]
 // 不開主畫面也能逐項檢查引擎功能，最後再開主視窗截圖。結果寫成 JSON，結束代碼＝失敗項目數。
 #include "SelfTest.hpp"
+#include "Updater.hpp"
 
 #include "Engine.hpp"
 #include "GraphicSource.hpp"
@@ -21,6 +22,8 @@
 #include <QJsonObject>
 #include <QLineEdit>
 #include <QListWidget>
+#include <QMenu>
+#include <QProcess>
 #include <QTabWidget>
 #include <QPushButton>
 #include <QStandardPaths>
@@ -724,6 +727,73 @@ int RunSelfTest(QApplication &app, const QString &configDir, const QString &repo
 	rep.Check(QStringLiteral("輸出固定 1920×1080"), ovi.base_width == 1920 && ovi.base_height == 1080 &&
 								   ovi.output_width == 1920 && ovi.output_height == 1080);
 
+	// ------------------------------------------------ 說明與更新
+	rep.Section(QStringLiteral("說明與更新"));
+	{
+		const bool cmpOk = CompareVersions(QStringLiteral("2.0.0-m2.23"), QStringLiteral("2.0.0-m2.22")) > 0 &&
+				   CompareVersions(QStringLiteral("2.0.0-m2.9"), QStringLiteral("2.0.0-m2.10")) < 0 &&
+				   CompareVersions(QStringLiteral("2.0.0"), QStringLiteral("2.0.0-m2.99")) > 0 &&
+				   CompareVersions(QStringLiteral("v2.0.0-m2.22"), QStringLiteral("2.0.0-m2.22")) == 0;
+		rep.Check(QStringLiteral("版本比較（m2.9 < m2.10、正式版 > 測試版）"), cmpOk);
+
+		const QByteArray sample = R"([
+		  {"tag_name":"v2.0.0-m2.9","draft":false,"name":"old","body":"a","html_url":"u9",
+		   "assets":[{"name":"MeikouLiveStudio-2.0.0-m2.9-Windows-x64-Setup.exe","size":10,"browser_download_url":"d9","digest":"sha256:AA"},
+			     {"name":"MeikouLiveStudio-2.0.0-m2.9-macOS-AppleSilicon.pkg","size":11,"browser_download_url":"m9"}]},
+		  {"tag_name":"v2.0.0-m2.30","draft":true,"assets":[{"name":"MeikouLiveStudio-2.0.0-m2.30-Windows-x64-Setup.exe"}]},
+		  {"tag_name":"v2.0.0-m2.12","draft":false,"name":"new","body":"b","html_url":"u12",
+		   "assets":[{"name":"MeikouLiveStudio-2.0.0-m2.12-Windows-x64-Setup.exe","size":12,"browser_download_url":"d12","digest":"sha256:BB"}]}
+		])";
+		ReleaseInfo win, mac;
+		QString perr;
+		const bool pw = ParseLatestRelease(sample, QStringLiteral("-Windows-x64-Setup.exe"), win, perr);
+		const bool pm = ParseLatestRelease(sample, QStringLiteral("-macOS-AppleSilicon.pkg"), mac, perr);
+		rep.Check(QStringLiteral("找出最新版（跳過草稿、只看這個平台的安裝檔）"),
+			  pw && win.version == QLatin1String("2.0.0-m2.12") && win.sha256 == QLatin1String("bb") && pm &&
+				  mac.version == QLatin1String("2.0.0-m2.9"),
+			  win.version + QStringLiteral("／") + mac.version);
+
+		const QString log = ChangelogText();
+		rep.Check(QStringLiteral("更新歷程有內建在程式裡"), log.count(QStringLiteral("\n## ")) >= 5,
+			  QStringLiteral("%1 個版本段落").arg(log.count(QStringLiteral("\n## "))));
+		rep.Check(QStringLiteral("更新歷程有這一版的說明"), log.contains(QStringLiteral("## ") + QString::fromUtf8(MEIKOU_VERSION)),
+			  QString::fromUtf8(MEIKOU_VERSION), true);
+
+		QString rerr;
+		const QString reportDir = ExportProblemReport(configDir, rerr, QDir(configDir).filePath(QStringLiteral("reports")));
+		const QStringList reportFiles = QDir(reportDir).entryList(QDir::Files);
+		rep.Check(QStringLiteral("匯出問題報告（紀錄檔＋系統資訊）"),
+			  !reportDir.isEmpty() && reportFiles.contains(QStringLiteral("系統資訊.txt")) && reportFiles.size() >= 2,
+			  reportFiles.join(u'、'));
+
+		// 連到正式的 GitHub Releases：找版本、下載這個平台的安裝檔、核對雜湊（不執行安裝）
+		QByteArray json;
+		QString ferr;
+		ReleaseInfo live;
+		const bool fetched = FetchReleasesSync(json, ferr) && ParseLatestRelease(json, PlatformAssetSuffix(), live, ferr);
+		rep.Check(QStringLiteral("連線檢查更新（GitHub Releases）"), fetched,
+			  fetched ? QStringLiteral("線上最新 %1").arg(live.version) : ferr, true);
+		if (fetched) {
+			const QString path = QDir(configDir).filePath(QStringLiteral("update/") + live.assetName);
+			QString derr;
+			QElapsedTimer dt;
+			dt.start();
+			const bool dl = DownloadSync(live.url, path, derr);
+			const bool sizeOk = dl && QFileInfo(path).size() == live.size;
+			const bool hashOk = sizeOk && VerifySha256(path, live.sha256, derr);
+			rep.Check(QStringLiteral("下載安裝檔並核對完整性"), dl && sizeOk && hashOk && !live.sha256.isEmpty(),
+				  dl ? QStringLiteral("%1 MB、%2 秒、SHA-256 %3")
+					       .arg(QFileInfo(path).size() / 1048576.0, 0, 'f', 1)
+					       .arg(dt.elapsed() / 1000.0, 0, 'f', 1)
+					       .arg(hashOk ? QStringLiteral("相符") : QStringLiteral("不符"))
+				     : derr,
+				  !dl); // 網路問題只提醒；下載成功但核對不符就是失敗
+			QString herr;
+			rep.Check(QStringLiteral("檔案被改過時拒絕安裝"), dl && !VerifySha256(path, QString(64, u'0'), herr));
+			QFile::remove(path);
+		}
+	}
+
 	// ------------------------------------------------ 介面截圖
 	rep.Section(QStringLiteral("介面"));
 	{
@@ -748,6 +818,27 @@ int RunSelfTest(QApplication &app, const QString &configDir, const QString &repo
 		const QImage ui = window->grab().toImage();
 		ui.save(QDir(shotsDir).filePath(QStringLiteral("ui.png")));
 		rep.Check(QStringLiteral("主視窗開啟"), !ui.isNull() && ui.width() > 800, QStringLiteral("ui.png"));
+		bool helpOk = false;
+		for (QPushButton *b : window->findChildren<QPushButton *>()) {
+			if (b->text() == QStringLiteral("說明") && b->menu()) {
+				QStringList items;
+				for (QAction *act : b->menu()->actions())
+					items << act->text();
+				helpOk = items.contains(QStringLiteral("更新歷程…")) && items.contains(QStringLiteral("檢查更新…")) &&
+					 items.contains(QStringLiteral("匯出問題報告…"));
+			}
+		}
+		rep.Check(QStringLiteral("說明選單（更新歷程、檢查更新、問題報告）"), helpOk);
+		{
+			auto *ud = new UpdateDialog(window, false);
+			ud->StartCheck();
+			waitFor([&] { return !ud->findChild<QProcess *>(); }, 30000);
+			pump(300);
+			ud->show();
+			pump(400);
+			ud->grab().toImage().save(QDir(shotsDir).filePath(QStringLiteral("update-dialog.png")));
+			delete ud;
+		}
 
 		// 推流目標：網址、金鑰上下排列、完整寬度；填好的收合，點摘要展開
 		if (auto *tabs = window->findChild<QTabWidget *>()) {

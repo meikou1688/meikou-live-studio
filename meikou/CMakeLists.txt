@@ -41,6 +41,8 @@ target_sources(
     src/OverlayDialog.hpp
     src/SelfTest.cpp
     src/SelfTest.hpp
+    src/Updater.cpp
+    src/Updater.hpp
     resources/meikou.qrc
 )
 

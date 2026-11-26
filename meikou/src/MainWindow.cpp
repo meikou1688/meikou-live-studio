@@ -248,13 +248,33 @@ QWidget *MainWindow::BuildTopBar()
 	statsLabel_ = new QLabel;
 	statsLabel_->setObjectName(QStringLiteral("stats"));
 	h->addWidget(statsLabel_);
-	auto *logBtn = new QPushButton(QStringLiteral("紀錄檔"));
-	logBtn->setObjectName(QStringLiteral("flat"));
-	connect(logBtn, &QPushButton::clicked, this, [] {
+	// 查到新版時才出現
+	updateBtn_ = new QPushButton;
+	updateBtn_->setObjectName(QStringLiteral("accent"));
+	updateBtn_->setVisible(false);
+	connect(updateBtn_, &QPushButton::clicked, this, [this] { OpenUpdateDialog(true); });
+	h->addWidget(updateBtn_);
+
+	// 說明：更新歷程、檢查更新、問題報告、關於
+	auto *helpBtn = new QPushButton(QStringLiteral("說明"));
+	helpBtn->setObjectName(QStringLiteral("flat"));
+	auto *help = new QMenu(helpBtn);
+	help->addAction(QStringLiteral("更新歷程…"), this, [this] { ShowChangelogDialog(this); });
+	help->addAction(QStringLiteral("檢查更新…"), this, [this] { OpenUpdateDialog(false); });
+	QAction *autoCheck = help->addAction(QStringLiteral("啟動時自動檢查更新"));
+	autoCheck->setCheckable(true);
+	autoCheck->setChecked(QSettings().value("update/autoCheck", true).toBool());
+	connect(autoCheck, &QAction::toggled, this, [](bool on) { QSettings().setValue("update/autoCheck", on); });
+	help->addSeparator();
+	help->addAction(QStringLiteral("匯出問題報告…"), this, [this] { ExportReport(); });
+	help->addAction(QStringLiteral("開啟紀錄資料夾"), this, [] {
 		QFileInfo fi(Q(CurrentLogPath()));
 		QDesktopServices::openUrl(QUrl::fromLocalFile(fi.absolutePath()));
 	});
-	h->addWidget(logBtn);
+	help->addSeparator();
+	help->addAction(QStringLiteral("關於 Meikou Live Studio"), this, [this] { ShowAboutDialog(this); });
+	helpBtn->setMenu(help);
+	h->addWidget(helpBtn);
 	clockLabel_ = new QLabel;
 	clockLabel_->setObjectName(QStringLiteral("clock"));
 	h->addWidget(clockLabel_);
@@ -1728,6 +1748,66 @@ void MainWindow::SaveSettings()
 	st.setValue("output/lowLatency", lowLatencyBox_->isChecked());
 	st.setValue("output/dynBitrate", dynBitrateBox_->isChecked());
 	st.setValue("output/fpsIndex", appliedFpsIndex_);
+}
+
+void MainWindow::OpenUpdateDialog(bool useKnownRelease)
+{
+	UpdateDialog dlg(this, engine_.Streaming() || engine_.Recording());
+	connect(&dlg, &UpdateDialog::installRequested, this, [this, &dlg] {
+		if (engine_.Streaming() || engine_.Recording()) {
+			QMessageBox::information(this, windowTitle(), QStringLiteral("直播或錄影中不能更新，結束後再安裝。"));
+			return;
+		}
+		dlg.accept();
+		// 存檔後關閉程式；main() 在引擎關閉後啟動安裝檔
+		QTimer::singleShot(0, this, [this] { close(); });
+	});
+	if (useKnownRelease && !newRelease_.version.isEmpty())
+		dlg.ShowRelease(newRelease_);
+	else
+		dlg.StartCheck();
+	dlg.exec();
+	if (PendingInstaller().isEmpty() || dlg.result() != QDialog::Accepted)
+		SetPendingInstaller(QString()); // 沒按安裝就不要在關閉時偷偷安裝
+}
+
+void MainWindow::StartAutoUpdateCheck()
+{
+	QSettings st;
+	if (!st.value("update/autoCheck", true).toBool())
+		return;
+	CheckForUpdateInBackground(this, [this](const ReleaseInfo &rel) {
+		newRelease_ = rel;
+		updateBtn_->setText(QStringLiteral("有新版 %1").arg(rel.version));
+		updateBtn_->setToolTip(QStringLiteral("點一下查看更新內容並安裝"));
+		updateBtn_->setVisible(true);
+	});
+}
+
+void MainWindow::ExportReport()
+{
+	SaveProject();
+	QString err;
+	const QString dir = ExportProblemReport(QFileInfo(projectPath_).absolutePath(), err);
+	if (dir.isEmpty()) {
+		QMessageBox::warning(this, windowTitle(), err);
+		return;
+	}
+	QDesktopServices::openUrl(QUrl::fromLocalFile(dir));
+	QMessageBox::information(this, windowTitle(),
+				 QStringLiteral("問題報告已放在：\n%1\n\n請在「系統資訊.txt」寫下發生了什麼事，"
+						"再把整個資料夾壓縮後傳給開發者。")
+					 .arg(QDir::toNativeSeparators(dir)));
+}
+
+void MainWindow::ShowUncleanShutdownNotice()
+{
+	const auto r = QMessageBox::question(
+		this, windowTitle(),
+		QStringLiteral("上次 Meikou Live Studio 沒有正常關閉（可能當機或被強制結束）。\n\n"
+			       "要匯出問題報告嗎？報告裡有上次的紀錄檔，可以幫助找出原因。"));
+	if (r == QMessageBox::Yes)
+		ExportReport();
 }
 
 void MainWindow::closeEvent(QCloseEvent *event)

@@ -2,5 +2,6 @@
   <qresource prefix="/meikou">
     <file alias="logo.png">logo/wordmark-96h.png</file>
     <file alias="round.png">logo/round-256.png</file>
+    <file alias="CHANGELOG.md">CHANGELOG.md</file>
   </qresource>
 </RCC>

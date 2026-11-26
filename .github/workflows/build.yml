@@ -277,7 +277,10 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          sparse-checkout: tools
+          sparse-checkout: |
+            tools
+            meikou/resources/CHANGELOG.md
+          sparse-checkout-cone-mode: false
       - uses: actions/download-artifact@v4
         with:
           pattern: "{windows,macos}"
@@ -308,10 +311,31 @@ jobs:
           print("\n".join(lines))
           PY
           )
-          notes="Meikou Live Studio ${MEIKOU_VERSION}（commit ${GITHUB_SHA::7}）
+          # 這一版的更新內容（CHANGELOG.md 裡同版號的段落）
+          changes=$(python3 - <<'PY'
+          import os, re
+          v = os.environ.get("MEIKOU_VERSION", "")
+          try:
+              text = open("meikou/resources/CHANGELOG.md", encoding="utf-8").read()
+          except Exception:
+              text = ""
+          out = []
+          for sec in re.split(r"\n(?=## )", text):
+              if sec.startswith("## " + v):
+                  out = sec.strip().splitlines()[1:]
+          print("\n".join(out) if out else "- 例行更新")
+          PY
+          )
+          notes="## 這一版更新了什麼
+          ${changes}
+
+          ## 下載與安裝
+          Meikou Live Studio ${MEIKOU_VERSION}（commit ${GITHUB_SHA::7}）
           - Windows：下載 *-Windows-x64-Setup.exe，點兩下就會自動安裝並開啟。zip 為免安裝版。
           - macOS（Apple Silicon M 系列晶片）：下載 *-macOS-AppleSilicon.pkg，點兩下安裝到「應用程式」。
             第一次打開若出現「無法驗證開發者」，到「系統設定 → 隱私權與安全性」按「強制打開」。
+
+          ## 自動巡檢
           ${summary}"
           # 巡檢報告與截圖一起附在 Release（檔名 SelfTest-*.zip）
           for d in selftest/selftest-*; do

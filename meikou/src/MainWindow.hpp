@@ -1,6 +1,7 @@
 #pragma once
 
 #include "Engine.hpp"
+#include "Updater.hpp"
 
 #include <QMainWindow>
 
@@ -31,6 +32,12 @@ class MainWindow : public QMainWindow {
 public:
 	MainWindow(Engine &engine, const QString &projectPath, QWidget *parent = nullptr);
 	~MainWindow() override;
+
+public:
+	// 上次沒有正常關閉時，提醒匯出問題報告
+	void ShowUncleanShutdownNotice();
+	// 啟動後在背景檢查更新（設定裡可以關掉）
+	void StartAutoUpdateCheck();
 
 protected:
 	void closeEvent(QCloseEvent *event) override;
@@ -130,6 +137,10 @@ private:
 	QLabel *recLabel_ = nullptr;
 	QLabel *statsLabel_ = nullptr;
 	QLabel *clockLabel_ = nullptr;
+	QPushButton *updateBtn_ = nullptr; // 查到新版時出現在頂列
+	ReleaseInfo newRelease_;
+	void OpenUpdateDialog(bool useKnownRelease);
+	void ExportReport();
 
 	QTimer *statsTimer_ = nullptr;
 	QTimer *saveTimer_ = nullptr;

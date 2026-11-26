@@ -2,6 +2,7 @@
 #include "GraphicsRender.hpp"
 #include "Log.hpp"
 #include "MainWindow.hpp"
+#include "Updater.hpp"
 #include "SelfTest.hpp"
 
 #include <QApplication>
@@ -13,6 +14,7 @@
 #include <QPalette>
 #include <QSettings>
 #include <QStandardPaths>
+#include <QTimer>
 #include <QStyleFactory>
 
 #include <util/base.h>
@@ -181,15 +183,32 @@ int main(int argc, char *argv[])
 			engine.CreateDefaultAudio();
 		}
 
+		// 上次沒有正常關閉：啟動時有標記檔、正常結束時刪掉
+		const QString sessionMark = configDir + QStringLiteral("/session.running");
+		const bool unclean = QFile::exists(sessionMark);
+		if (unclean)
+			blog(LOG_WARNING, "Previous session did not exit normally");
+		{
+			QFile mark(sessionMark);
+			if (mark.open(QIODevice::WriteOnly))
+				mark.write(MEIKOU_VERSION);
+		}
 		{
 			meikou::MainWindow window(engine, projectPath);
 			window.show();
+			if (unclean)
+				QTimer::singleShot(1200, &window, [&window] { window.ShowUncleanShutdownNotice(); });
+			QTimer::singleShot(4000, &window, [&window] { window.StartAutoUpdateCheck(); });
 			ret = app.exec();
 		}
 		engine.Shutdown();
 	}
 
+	QFile::remove(configDir + QStringLiteral("/session.running"));
 	blog(LOG_INFO, "Meikou Live Studio exited normally");
+	const QString installer = meikou::PendingInstaller();
+	if (!installer.isEmpty() && !meikou::LaunchInstaller(installer))
+		blog(LOG_WARNING, "Could not launch installer");
 	meikou::ShutdownLogging();
 	return ret;
 }
