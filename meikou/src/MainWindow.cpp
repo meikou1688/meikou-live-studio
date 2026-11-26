@@ -321,7 +321,7 @@ QWidget *MainWindow::BuildSwitcher()
 	mid->addStretch(1);
 	auto *midW = new QWidget;
 	midW->setLayout(mid);
-	midW->setFixedWidth(120);
+	midW->setFixedWidth(150); // 「送出 AUTO／撤回 AUTO」要放得下
 
 	auto *pgmBox = new QVBoxLayout;
 	auto *pgmTitle = new QLabel(QStringLiteral("播出 PGM"));

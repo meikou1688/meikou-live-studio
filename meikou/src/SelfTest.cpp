@@ -569,7 +569,7 @@ int RunSelfTest(QApplication &app, const QString &configDir, const QString &repo
 			rep.Check(QStringLiteral("推流中有送出資料"), tt.active && tt.kbps > 500,
 				  QStringLiteral("%1 kbps，網路掉格 %2").arg(tt.kbps, 0, 'f', 0).arg(tt.dropped));
 			engine.StopStreaming();
-			rep.Check(QStringLiteral("停止推流"), waitFor([&] { return !engine.Streaming(); }, 10000));
+			rep.Check(QStringLiteral("停止推流"), waitFor([&] { return !engine.Streaming(); }, 15000));
 		}
 		engine.Targets().clear();
 

@@ -1070,9 +1070,9 @@ void Engine::ResetOverlayPosition(Overlay *ov)
 		if (w > 300)
 			scale = 300.0f / (float)w;
 	} else if (ov->kind == "lower" && ov->vertical) {
-		align = OBS_ALIGN_RIGHT | OBS_ALIGN_TOP; // 直式姓名條放右上
-		x = 1860;
-		y = 90;
+		align = OBS_ALIGN_RIGHT | OBS_ALIGN_TOP; // 直式姓名條放右側，避開右上角的台標
+		x = 1870;
+		y = 320;
 	} else if (ov->kind == "lower") {
 		align = OBS_ALIGN_LEFT | OBS_ALIGN_BOTTOM;
 		x = 100;
