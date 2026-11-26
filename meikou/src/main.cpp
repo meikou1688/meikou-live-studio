@@ -3,6 +3,7 @@
 #include "Log.hpp"
 #include "MainWindow.hpp"
 #include "Updater.hpp"
+#include "NetMedia.hpp"
 #include "SelfTest.hpp"
 
 #include <QApplication>
@@ -58,6 +59,9 @@ QTabBar::tab { background: #1c1e26; padding: 8px 14px; border: 1px solid #2a2d38
 QTabBar::tab:selected { background: #2a2d38; color: white; border-bottom: 2px solid #00e5c0; }
 QListWidget, QTableWidget, QLineEdit, QSpinBox, QComboBox { background: #20222b; border: 1px solid #3a3e4c; border-radius: 4px; padding: 3px; }
 QHeaderView::section { background: #1c1e26; border: none; padding: 4px; color: #b8bdc9; }
+QPushButton#mediaBtn, QPushButton#mediaPlay { padding: 0 6px; min-width: 26px; font-size: 13px; background: #262935; }
+QPushButton#mediaBtn:hover, QPushButton#mediaPlay:hover { border-color: #00e5c0; }
+QLabel#mediaTime { color: #8a90a0; font-size: 11px; padding-left: 4px; }
 QFrame#targetCard { background: #1c1e26; border: 1px solid #2a2d38; border-radius: 6px; }
 QPushButton#targetSummary { text-align: left; background: #20222b; border: 1px dashed #3a3e4c; padding: 6px 10px; color: #b8bdc9; }
 QPushButton#targetSummary:hover { border-color: #00e5c0; color: #e6e8ec; }
@@ -125,6 +129,7 @@ int main(int argc, char *argv[])
 		QDir::setCurrent(QCoreApplication::applicationDirPath());
 #endif
 		meikou::InitLogging((dir + QStringLiteral("/logs")).toUtf8().toStdString());
+		meikou::SetToolsBaseDir(dir);
 		blog(LOG_INFO, "Meikou Live Studio %s self test", MEIKOU_VERSION);
 		const int failed = meikou::RunSelfTest(app, dir, arg(QStringLiteral("--report"), dir + QStringLiteral("/report.json")),
 						       arg(QStringLiteral("--shots"), dir + QStringLiteral("/shots")),
@@ -135,6 +140,7 @@ int main(int argc, char *argv[])
 
 	const QString configDir = QStandardPaths::writableLocation(QStandardPaths::AppDataLocation);
 	QDir().mkpath(configDir);
+	meikou::SetToolsBaseDir(configDir); // YouTube／Facebook 解析工具放在這裡
 
 	// 同一台電腦只開一個，避免兩個程式搶同一張擷取卡
 	QLockFile lock(configDir + QStringLiteral("/running.lock"));

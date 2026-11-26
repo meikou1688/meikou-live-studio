@@ -1242,6 +1242,142 @@ QImage RenderTextGraphic(const GraphicSpec &g)
 	return img;
 }
 
+
+// ------------------------------------------------------------ 純文字（透明背景）
+
+struct Deco {
+	bool shadow = false, stroke = false;
+	double width = 0; // 邊框粗細（字外側）
+	QColor color;
+};
+
+Deco DecoOf(const GraphicSpec &g, double px)
+{
+	Deco d;
+	d.shadow = g.decor == "shadow" || g.decor == "both";
+	d.stroke = g.decor == "stroke" || g.decor == "both";
+	d.width = std::max(2.0, px * 0.07);
+	d.color = C(g.strokeColor);
+	return d;
+}
+
+double DecoMargin(const Deco &d, double s)
+{
+	return 6 * s + (d.stroke ? d.width : 0) + (d.shadow ? 16 * s : 0);
+}
+
+void PaintDecorated(QPainter &p, const QPainterPath &path, const QColor &fill, const Deco &d, double s)
+{
+	if (d.shadow) {
+		QPainterPath shape = path;
+		if (d.stroke) {
+			QPainterPathStroker st;
+			st.setWidth(d.width * 2);
+			st.setJoinStyle(Qt::RoundJoin);
+			shape = st.createStroke(path).united(path);
+		}
+		DropShadow(p, shape, 5 * s, 4 * s, 0.75);
+	}
+	if (d.stroke)
+		p.strokePath(path, QPen(d.color, d.width * 2, Qt::SolidLine, Qt::RoundCap, Qt::RoundJoin));
+	p.fillPath(path, fill);
+}
+
+QPainterPath TextPath(const QFont &f, double x, double top, const QString &s, bool mono = false)
+{
+	QPainterPath path;
+	path.setFillRule(Qt::WindingFill);
+	if (s.isEmpty())
+		return path;
+	QFontMetricsF fm(f);
+	const double base = top + fm.ascent();
+	if (!mono) {
+		path.addText(x, base, f, s);
+		return path;
+	}
+	double digit = 0;
+	for (QChar c = u'0'; c <= u'9'; c = QChar(c.unicode() + 1))
+		digit = std::max(digit, fm.horizontalAdvance(c));
+	for (QChar c : s) {
+		const double adv = c.isDigit() ? digit : fm.horizontalAdvance(c);
+		const double off = c.isDigit() ? (digit - fm.horizontalAdvance(c)) / 2.0 : 0.0;
+		path.addText(x + off, base, f, QString(c));
+		x += adv;
+	}
+	return path;
+}
+
+// 文字、時鐘、姓名條、台標的「純文字」：沒有底、沒有圖片，只有字（可選陰影、邊框）
+QImage RenderPlain(const GraphicSpec &g)
+{
+	const double s = Scale(g);
+	const QColor tc = C(g.textColor);
+	struct Line {
+		QString text;
+		QFont font;
+		bool mono = false;
+	};
+	std::vector<Line> lines;
+	if (g.kind == "clock") {
+		const QString prefix = U(g.text1).trimmed();
+		lines.push_back({(prefix.isEmpty() ? QString() : prefix + QStringLiteral(" ")) + TimeText(g),
+				 Font(64 * s, QFont::Black, g.italic), true});
+		if (g.showDate)
+			lines.push_back({DateText(), Font(26 * s, QFont::Bold, g.italic)});
+	} else if (g.kind == "lower") {
+		lines.push_back({U(g.text1), Font(56 * s, QFont::Black, g.italic)});
+		lines.push_back({U(g.text2), Font(30 * s, QFont::Bold, g.italic)});
+	} else if (g.kind == "logo") {
+		const QString t = U(g.text1).isEmpty() ? QStringLiteral("MEIKOU LIVE") : U(g.text1);
+		lines.push_back({t, Font(48 * s, QFont::Black, g.italic)});
+		lines.push_back({U(g.text2), Font(22 * s, QFont::Bold, g.italic)});
+	} else {
+		const QString t = U(g.text1).isEmpty() ? QStringLiteral("Meikou Live Studio") : U(g.text1);
+		lines.push_back({t, Font(72 * s, QFont::Black, g.italic)});
+	}
+	lines.erase(std::remove_if(lines.begin(), lines.end(), [](const Line &l) { return l.text.trimmed().isEmpty(); }),
+		    lines.end());
+	if (lines.empty())
+		lines.push_back({QStringLiteral(" "), Font(56 * s, QFont::Black, g.italic)});
+	const Deco d = DecoOf(g, lines.front().font.pixelSize());
+	const double m = DecoMargin(d, s);
+
+	QPainterPath path;
+	path.setFillRule(Qt::WindingFill);
+	double w = 0, h = 0;
+	if (g.kind == "lower" && g.vertical) {
+		// 直式：姓名一欄、職稱一欄，由右往左
+		double x = 0;
+		std::vector<std::pair<double, const Line *>> cols;
+		for (const auto &l : lines) {
+			cols.push_back({x, &l});
+			x += VColumnWidth(l.font) + 6 * s;
+		}
+		w = x - 6 * s;
+		for (const auto &c : cols) {
+			const double cx = w - c.first - VColumnWidth(c.second->font) / 2;
+			QPainterPath col;
+			col.setFillRule(Qt::WindingFill);
+			h = std::max(h, VText(&col, c.second->font, cx, 0, c.second->text));
+			path.addPath(col);
+		}
+	} else {
+		double y = 0;
+		for (const auto &l : lines) {
+			path.addPath(TextPath(l.font, 0, y, l.text, l.mono));
+			w = std::max(w, l.mono ? MonoWidth(l.font, l.text) : TextW(l.font, l.text));
+			y += QFontMetricsF(l.font).height() * 0.98;
+		}
+		h = y;
+	}
+	QImage img = Canvas(w + m * 2, h + m * 2);
+	QPainter p;
+	Begin(p, img, g);
+	path.translate(m, m);
+	PaintDecorated(p, path, tc, d, s);
+	return img;
+}
+
 // ------------------------------------------------------------ 跑馬燈
 
 struct TickerLayout {
@@ -1268,18 +1404,19 @@ std::vector<StyleChoice> GraphicStyles(const std::string &kind)
 	if (kind == "lower")
 		return {{"news", "新聞台"},     {"clean", "簡約白卡"},   {"sport", "斜切運動"}, {"pill", "圓角膠囊"},
 			{"outline", "透明描邊"}, {"glass", "玻璃漸層"},   {"split", "雙色分割"}, {"bracket", "角框"},
-			{"ribbon", "緞帶"},      {"underline", "細線極簡"}};
+			{"ribbon", "緞帶"},      {"underline", "細線極簡"}, {"plain", "純文字（透明背景）"}};
 	if (kind == "clock")
 		return {{"dark", "深色圓角"}, {"live", "LIVE 紅標"}, {"outline", "透明描邊"}, {"neon", "霓虹"},
-			{"flip", "翻頁卡"},   {"pill", "膠囊"},       {"minimal", "極簡直線"}};
+			{"flip", "翻頁卡"},   {"pill", "膠囊"},       {"minimal", "極簡直線"}, {"plain", "純文字（透明背景）"}};
 	if (kind == "ticker")
 		return {{"news", "新聞快訊"}, {"light", "白底"},     {"gradient", "漸層"},
-			{"glass", "半透明"},   {"sport", "斜切運動"}, {"minimal", "無底描邊"}};
+			{"glass", "半透明"},   {"sport", "斜切運動"}, {"minimal", "無底描邊"}, {"plain", "純文字（透明背景）"}};
 	if (kind == "logo")
 		return {{"plain", "原圖"},          {"circle", "圓形徽章"},  {"card", "圓角卡片"},     {"rounded", "圓角裁切"},
-			{"frame", "框線＋LIVE"},    {"watermark", "半透明浮水印"}, {"text", "文字台標"}};
+			{"frame", "框線＋LIVE"},    {"watermark", "半透明浮水印"}, {"text", "文字台標"},
+			{"plain", "純文字（透明背景）"}};
 	if (kind == "text")
-		return {{"stroke", "描邊"}, {"shadow", "陰影"}, {"box", "底框"},
+		return {{"plain", "純文字（透明背景）"}, {"stroke", "描邊"}, {"shadow", "陰影"}, {"box", "底框"},
 			{"neon", "霓虹"},   {"gradient", "漸層字"}, {"ribbon", "斜切底"}};
 	return {};
 }
@@ -1304,6 +1441,10 @@ void ApplyPalette(GraphicSpec &g, const Palette &pal)
 	g.color = pal.primary;
 	g.color2 = lightBase ? pal.light : pal.dark;
 	g.textColor = lightBase ? pal.dark : pal.light;
+	if (g.style == "plain") { // 純文字：字用主色、邊框用深色
+		g.textColor = pal.primary == 0xFF2B2B2B ? 0xFFFFFFFF : pal.primary;
+		g.strokeColor = pal.dark;
+	}
 	if (g.kind == "ticker" && !lightBase)
 		g.color2 = (pal.dark & 0x00FFFFFF) | 0xF0000000; // 跑馬燈底條略透明
 }
@@ -1346,6 +1487,11 @@ void ApplyStyleColors(GraphicSpec &g)
 		{"text", "gradient", 0xFFF59E0B, 0xFF1F1300, 0xFFFFFFFF},
 		{"text", "ribbon", 0xFFD7263D, 0xFF000000, 0xFFFFFFFF},
 	};
+	if (g.style == "plain") { // 純文字預設：白字、黑邊框色、不加裝飾
+		g.textColor = 0xFFFFFFFF;
+		g.strokeColor = 0xFF000000;
+		g.color2 = 0xFF000000;
+	}
 	if (g.kind == "lower")
 		g.italic = g.style == "sport"; // 斜切運動預設斜體，其他預設正體（之後都能自己改）
 	for (const auto &pr : presets) {
@@ -1355,7 +1501,7 @@ void ApplyStyleColors(GraphicSpec &g)
 			g.textColor = pr.tc;
 		}
 	}
-	if (g.kind == "logo") {
+	if (g.kind == "logo" && g.style != "plain") {
 		if (g.style != "text") {
 			g.color = 0xFF0ABAB5;
 			g.color2 = 0xFFFFFFFF;
@@ -1396,6 +1542,8 @@ void LoadBrandFonts()
 
 QImage RenderGraphic(const GraphicSpec &g)
 {
+	if (g.style == "plain" && (g.kind == "lower" || g.kind == "clock" || g.kind == "logo" || g.kind == "text"))
+		return RenderPlain(g);
 	if (g.kind == "lower")
 		return RenderLower(g);
 	if (g.kind == "clock")
@@ -1415,6 +1563,25 @@ TickerParts RenderTicker(const GraphicSpec &g)
 	const QString label = U(g.label), text = U(g.text1);
 
 	TickerParts out;
+	if (g.style == "plain") {
+		// 純文字跑馬燈：沒有底條，標籤和內容都只有字（可選陰影、邊框）
+		const Deco d = DecoOf(g, L.textF.pixelSize());
+		out.bar = Canvas(W, h);
+		double textX = 8 * s;
+		if (!label.isEmpty()) {
+			QPainter p;
+			Begin(p, out.bar, g);
+			PaintDecorated(p, TextPath(L.labelF, textX, (h - QFontMetricsF(L.labelF).height()) / 2, label), c1, d, s);
+			textX += TextW(L.labelF, label) + 32 * s;
+		}
+		out.area = QRect((int)textX, 0, (int)(W - textX - 12 * s), (int)h);
+		const double gap = 120 * s, tw = std::max(1.0, TextW(L.textF, text));
+		out.text = Canvas(tw + gap, h);
+		QPainter q;
+		Begin(q, out.text, g);
+		PaintDecorated(q, TextPath(L.textF, d.width + 4 * s, (h - QFontMetricsF(L.textF).height()) / 2, text), tc, d, s);
+		return out;
+	}
 	out.bar = Canvas(W, h);
 	QPainter p;
 	Begin(p, out.bar, g);

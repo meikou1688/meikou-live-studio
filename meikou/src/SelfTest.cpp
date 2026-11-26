@@ -2,6 +2,7 @@
 // 不開主畫面也能逐項檢查引擎功能，最後再開主視窗截圖。結果寫成 JSON，結束代碼＝失敗項目數。
 #include "SelfTest.hpp"
 #include "Updater.hpp"
+#include "NetMedia.hpp"
 
 #include "Engine.hpp"
 #include "GraphicSource.hpp"
@@ -24,6 +25,7 @@
 #include <QListWidget>
 #include <QMenu>
 #include <QProcess>
+#include <QSplitter>
 #include <QTabWidget>
 #include <QPushButton>
 #include <QStandardPaths>
@@ -488,6 +490,39 @@ int RunSelfTest(QApplication &app, const QString &configDir, const QString &repo
 		rep.Check(QStringLiteral("台標文字可以放在圖片右、左、上、下"), badPos.isEmpty(), badPos.join(u'、'));
 	}
 
+	// 純文字（透明背景）：四種裝飾、邊框顏色
+	{
+		QStringList badPlain;
+		for (const char *kind : {"text", "clock", "lower", "logo", "ticker"}) {
+			int prevW = 0;
+			for (const char *decor : {"none", "shadow", "stroke", "both"}) {
+				GraphicSpec g;
+				g.kind = kind;
+				ApplyGraphicDefaults(g);
+				g.style = "plain";
+				ApplyStyleColors(g);
+				g.text1 = "直播 LIVE 123";
+				g.text2 = "主持人";
+				g.decor = decor;
+				g.strokeColor = 0xFF0ABAB5;
+				const QImage img = std::string(kind) == "ticker" ? RenderTicker(g).text : RenderGraphic(g);
+				const bool transparentCorner = !img.isNull() && qAlpha(img.pixel(0, 0)) == 0 &&
+							       qAlpha(img.pixel(img.width() - 1, img.height() - 1)) == 0;
+				bool hasBorderColor = std::string(decor) != "stroke" && std::string(decor) != "both";
+				for (int y = 0; !hasBorderColor && y < img.height(); y += 2)
+					for (int x = 0; !hasBorderColor && x < img.width(); x += 2) {
+						const QColor c = QColor::fromRgba(img.pixel(x, y));
+						hasBorderColor = c.alpha() > 200 && c.green() > 150 && c.red() < 60;
+					}
+				if (img.isNull() || !transparentCorner || !hasBorderColor || img.width() < prevW)
+					badPlain << QStringLiteral("%1/%2").arg(QString::fromLatin1(kind), QString::fromLatin1(decor));
+				prevW = std::string(decor) == "none" ? img.width() : prevW;
+			}
+		}
+		rep.Check(QStringLiteral("純文字透明背景：無裝飾／陰影／邊框／邊框＋陰影（邊框顏色）"), badPlain.isEmpty(),
+			  badPlain.isEmpty() ? QStringLiteral("文字、時鐘、姓名條、台標、跑馬燈 × 4 種") : badPlain.join(u'、'));
+	}
+
 	// 疊加屬於場景：每個場景有自己的訊號源與疊加
 	rep.Section(QStringLiteral("場景裡的疊加"));
 	GraphicSpec lower;
@@ -682,6 +717,108 @@ int RunSelfTest(QApplication &app, const QString &configDir, const QString &repo
 	}
 
 	// ------------------------------------------------ 專案
+	rep.Section(QStringLiteral("影片播放"));
+	{
+		const QString clip = QDir(configDir).filePath(QStringLiteral("selftest-obs_x264.mkv"));
+		obs_data_t *ms = obs_data_create();
+		obs_data_set_bool(ms, "is_local_file", true);
+		obs_data_set_string(ms, "local_file", clip.toUtf8().constData());
+		obs_data_set_bool(ms, "looping", true);
+		obs_data_set_bool(ms, "restart_on_activate", true);
+		Input *mv = engine.AddInput("ffmpeg_source", "測試影片", ms);
+		obs_data_release(ms);
+		Input *mscene = engine.CreateScene("影片測試場景");
+		if (mv && mscene) {
+			engine.AddSourceToScene(mscene, mv);
+			engine.SetPreview(mscene);
+			obs_source_t *src = mv->source;
+			const bool playing = waitFor(
+				[&] { return obs_source_get_width(src) > 0 && obs_source_media_get_state(src) == OBS_MEDIA_STATE_PLAYING; },
+				10000);
+			rep.Check(QStringLiteral("影片放在預覽就開始播放"), playing,
+				  QStringLiteral("%1×%2").arg(obs_source_get_width(src)).arg(obs_source_get_height(src)));
+			pump(2500);
+			obs_source_media_play_pause(src, true);
+			pump(500);
+			const int64_t tp = obs_source_media_get_time(src);
+			pump(1000);
+			const int64_t tp2 = obs_source_media_get_time(src);
+			rep.Check(QStringLiteral("暫停"), obs_source_media_get_state(src) == OBS_MEDIA_STATE_PAUSED && std::llabs(tp2 - tp) < 300,
+				  QStringLiteral("%1 → %2 ms").arg(tp).arg(tp2));
+			obs_source_media_play_pause(src, false);
+			pump(800);
+			rep.Check(QStringLiteral("繼續播放"), obs_source_media_get_state(src) == OBS_MEDIA_STATE_PLAYING);
+			pump(1500);
+			const int64_t before = obs_source_media_get_time(src);
+			engine.Cut();
+			pump(900);
+			const int64_t after = obs_source_media_get_time(src);
+			rep.Check(QStringLiteral("送出時影片自動從頭播放"), engine.Program() == mscene && after < before && after < 2000,
+				  QStringLiteral("送出前 %1 ms、送出後 %2 ms").arg(before).arg(after));
+			obs_source_media_stop(src);
+			pump(600);
+			rep.Check(QStringLiteral("停止"), obs_source_media_get_state(src) == OBS_MEDIA_STATE_STOPPED);
+			obs_source_media_restart(src);
+			rep.Check(QStringLiteral("重播"),
+				  waitFor([&] { return obs_source_media_get_state(src) == OBS_MEDIA_STATE_PLAYING; }, 5000));
+			engine.Cut(); // 撤回，播出換回原本的場景
+			pump(300);
+		} else {
+			rep.Check(QStringLiteral("影片放在預覽就開始播放"), false, QStringLiteral("無法建立影片訊號源"));
+		}
+		if (mv)
+			engine.RemoveInput(mv->uid);
+		if (mscene)
+			engine.RemoveInput(mscene->uid);
+	}
+
+	rep.Section(QStringLiteral("網路影片"));
+	{
+		const bool urlOk = IsPageUrl(QStringLiteral("https://www.youtube.com/watch?v=jNQXAC9IVRw")) &&
+				   IsPageUrl(QStringLiteral("https://www.facebook.com/watch/?v=1")) &&
+				   IsPageUrl(QStringLiteral("https://fb.watch/abc/")) && !IsPageUrl(QStringLiteral("rtmp://a/live")) &&
+				   !IsPageUrl(QStringLiteral("https://cdn.example.com/live/index.m3u8"));
+		rep.Check(QStringLiteral("分辨網頁網址（YouTube、Facebook）與串流網址"), urlOk);
+		QElapsedTimer tt;
+		tt.start();
+		QString terr;
+		const bool tools = InstallToolsSync(terr);
+		rep.Check(QStringLiteral("下載解析工具 yt-dlp＋Deno 並核對 SHA-256"), tools && ToolsReady(),
+			  tools ? QStringLiteral("%1 秒").arg(tt.elapsed() / 1000.0, 0, 'f', 1) : terr);
+		if (tools) {
+			ResolvedMedia m;
+			QString rerr;
+			tt.restart();
+			const bool r = ResolveSync(QStringLiteral("https://www.youtube.com/watch?v=jNQXAC9IVRw"), m, rerr, 150000);
+			// 雲端測試機的 IP 常被 YouTube 當成機器人擋下，所以只當提醒
+			rep.Check(QStringLiteral("解析 YouTube 影片網址"), r,
+				  r ? QStringLiteral("「%1」%2 秒").arg(m.title).arg(tt.elapsed() / 1000.0, 0, 'f', 1) : rerr, true);
+			if (r) {
+				obs_data_t *ns = obs_data_create();
+				obs_data_set_bool(ns, "is_local_file", false);
+				obs_data_set_string(ns, "input", m.url.toUtf8().constData());
+				obs_data_set_bool(ns, "restart_on_activate", !m.live);
+				Input *yt = engine.AddInput("ffmpeg_source", "YouTube 測試", ns);
+				obs_data_release(ns);
+				Input *ysc = engine.CreateScene("YouTube 測試場景");
+				bool shown = false;
+				if (yt && ysc) {
+					engine.AddSourceToScene(ysc, yt);
+					engine.SetPreview(ysc);
+					shown = waitFor([&] { return obs_source_get_width(yt->source) > 0; }, 20000);
+				}
+				rep.Check(QStringLiteral("YouTube 影片在預覽播放"), shown,
+					  yt ? QStringLiteral("%1×%2").arg(obs_source_get_width(yt->source)).arg(obs_source_get_height(yt->source))
+					     : QString(),
+					  true);
+				if (yt)
+					engine.RemoveInput(yt->uid);
+				if (ysc)
+					engine.RemoveInput(ysc->uid);
+			}
+		}
+	}
+
 	rep.Section(QStringLiteral("專案存檔"));
 	const QByteArray json = QByteArray::fromStdString(engine.SaveProjectJson());
 	QJsonParseError pe;
@@ -818,6 +955,19 @@ int RunSelfTest(QApplication &app, const QString &configDir, const QString &repo
 		const QImage ui = window->grab().toImage();
 		ui.save(QDir(shotsDir).filePath(QStringLiteral("ui.png")));
 		rep.Check(QStringLiteral("主視窗開啟"), !ui.isNull() && ui.width() > 800, QStringLiteral("ui.png"));
+		{
+			// 視窗放到最大：下方左右各半，功能分頁不能消失
+			window->showMaximized();
+			pump(800);
+			auto *bs = window->findChild<QSplitter *>(QStringLiteral("bottomSplit"));
+			QList<int> sz = bs ? bs->sizes() : QList<int>();
+			const bool half = sz.size() == 2 && sz[0] > 300 && sz[1] > 300 && std::abs(sz[0] - sz[1]) < (sz[0] + sz[1]) / 4;
+			window->grab().toImage().save(QDir(shotsDir).filePath(QStringLiteral("ui-maximized.png")));
+			rep.Check(QStringLiteral("最大化時下方左右各半（場景列｜功能分頁）"), half && bs->widget(1)->isVisible(),
+				  sz.size() == 2 ? QStringLiteral("%1 ｜ %2").arg(sz[0]).arg(sz[1]) : QStringLiteral("找不到分隔"));
+			window->showNormal();
+			pump(500);
+		}
 		bool helpOk = false;
 		for (QPushButton *b : window->findChildren<QPushButton *>()) {
 			if (b->text() == QStringLiteral("說明") && b->menu()) {

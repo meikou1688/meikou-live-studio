@@ -9,6 +9,7 @@
 
 class QCheckBox;
 class QGroupBox;
+class QSplitter;
 class QComboBox;
 class QGridLayout;
 class QHBoxLayout;
@@ -72,6 +73,8 @@ private:
 	void ToggleLayer(int64_t layerId);
 	void ShowLayerMenu(QWidget *anchor, const QPoint &pos, const LayerInfo &layer);
 	void RebuildRows();
+	static bool IsMediaInput(const Input *in);
+	void RefreshMediaLabels();
 	void RemoveSource(const std::string &uid);
 	void AddOverlayOfKind(const QString &kind);
 	void EditOverlay(const std::string &uid);
@@ -99,6 +102,9 @@ private:
 	QHBoxLayout *busLayout_ = nullptr;
 	QHBoxLayout *ovlLayout_ = nullptr;
 	QGroupBox *busGroup_ = nullptr;
+	QWidget *rowsPanel_ = nullptr; // 下方左半：場景／訊號源／疊加
+	QSplitter *mainSplit_ = nullptr;
+	QSplitter *bottomSplit_ = nullptr;
 	QGroupBox *ovlGroup_ = nullptr;
 	std::string currentScene_;
 	QString rowSig_;
@@ -141,6 +147,7 @@ private:
 	ReleaseInfo newRelease_;
 	void OpenUpdateDialog(bool useKnownRelease);
 	void ExportReport();
+	void RefreshPageStreams();
 
 	QTimer *statsTimer_ = nullptr;
 	QTimer *saveTimer_ = nullptr;

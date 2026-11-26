@@ -1,4 +1,5 @@
 #include "MainWindow.hpp"
+#include "NetMedia.hpp"
 
 #include "AudioMixer.hpp"
 #include "Display.hpp"
@@ -164,21 +165,34 @@ MainWindow::MainWindow(Engine &engine, const QString &projectPath, QWidget *pare
 	root->setSpacing(0);
 	root->addWidget(BuildTopBar());
 
-	auto *split = new QSplitter(Qt::Horizontal);
-	split->addWidget(BuildSwitcher());
-
+	// 上：預覽／播出；下：左半場景與訊號源、右半功能分頁（各一半，可拖曳分隔線調整）
+	QWidget *monitorsW = BuildSwitcher();
 	auto *tabs = new QTabWidget;
-	tabs->setMinimumWidth(420);
+	tabs->setMinimumWidth(360);
 	mixer_ = new AudioMixer(engine_);
 	tabs->addTab(mixer_, QStringLiteral("混音台"));
 	tabs->addTab(BuildOutputTab(), QStringLiteral("推流／錄影"));
 	tabs->addTab(BuildOverlayTab(), QStringLiteral("疊加素材"));
 	tabs->addTab(BuildSourcesTab(), QStringLiteral("訊號源"));
-	split->addWidget(tabs);
-	split->setStretchFactor(0, 1);
-	split->setStretchFactor(1, 0);
-	split->setSizes({1150, 450});
-	root->addWidget(split, 1);
+	bottomSplit_ = new QSplitter(Qt::Horizontal);
+	bottomSplit_->setObjectName(QStringLiteral("bottomSplit"));
+	bottomSplit_->addWidget(rowsPanel_);
+	bottomSplit_->addWidget(tabs);
+	bottomSplit_->setChildrenCollapsible(false);
+	bottomSplit_->setStretchFactor(0, 1);
+	bottomSplit_->setStretchFactor(1, 1);
+	bottomSplit_->setSizes({800, 800});
+	mainSplit_ = new QSplitter(Qt::Vertical);
+	mainSplit_->setObjectName(QStringLiteral("mainSplit"));
+	mainSplit_->addWidget(monitorsW);
+	mainSplit_->addWidget(bottomSplit_);
+	mainSplit_->setChildrenCollapsible(false);
+	mainSplit_->setStretchFactor(0, 3);
+	mainSplit_->setStretchFactor(1, 2);
+	mainSplit_->setSizes({520, 420});
+	monitorsW->setMinimumHeight(260);
+	bottomSplit_->setMinimumHeight(300);
+	root->addWidget(mainSplit_, 1);
 	setCentralWidget(central);
 
 	engine_.onOutputEvent = [this](int index, const std::string &kind, const std::string &message) {
@@ -197,6 +211,7 @@ MainWindow::MainWindow(Engine &engine, const QString &projectPath, QWidget *pare
 	statsTimer_->start(1000);
 
 	LoadSettings();
+	QTimer::singleShot(1500, this, [this] { RefreshPageStreams(); });
 	SetupShortcuts();
 	RebuildBus();
 	RebuildSourceList();
@@ -364,6 +379,12 @@ QWidget *MainWindow::BuildSwitcher()
 	monitors->addLayout(pgmBox, 1);
 	v->addLayout(monitors, 1);
 
+	// 下方左半：場景、訊號源、疊加（右半是功能分頁，由建構子組合）
+	rowsPanel_ = new QWidget;
+	auto *rv = new QVBoxLayout(rowsPanel_);
+	rv->setContentsMargins(10, 4, 6, 10);
+	rv->setSpacing(8);
+
 	// 場景列：點一下放到預覽並成為「目前場景」，下面兩列只顯示這個場景的內容
 	auto *sceneGroup = new QGroupBox(QStringLiteral("場景　（點一下放到預覽，F1–F12 快捷鍵；按「送出」上播出，再按一次撤回到預覽）"));
 	auto *sceneOuter = new QHBoxLayout(sceneGroup);
@@ -415,7 +436,7 @@ QWidget *MainWindow::BuildSwitcher()
 	sceneBtns->addWidget(newScene);
 	sceneBtns->addStretch(1);
 	sceneOuter->addLayout(sceneBtns);
-	v->addWidget(sceneGroup);
+	rv->addWidget(sceneGroup);
 
 	// 目前場景的訊號源
 	busGroup_ = new QGroupBox;
@@ -423,7 +444,7 @@ QWidget *MainWindow::BuildSwitcher()
 	auto *busScroll = new QScrollArea;
 	busScroll->setWidgetResizable(true);
 	busScroll->setFrameShape(QFrame::NoFrame);
-	busScroll->setFixedHeight(78);
+	busScroll->setFixedHeight(104); // 影片按鈕下面有播放控制
 	auto *busInner = new QWidget;
 	busLayout_ = new QHBoxLayout(busInner);
 	busLayout_->setContentsMargins(0, 0, 0, 0);
@@ -484,16 +505,21 @@ QWidget *MainWindow::BuildSwitcher()
 	btnCol->addWidget(addSrc);
 	btnCol->addWidget(addExisting);
 	busOuter->addLayout(btnCol);
-	v->addWidget(busGroup_);
+	rv->addWidget(busGroup_);
 
 	// 目前場景的疊加
 	ovlGroup_ = new QGroupBox;
 	auto *ovlOuter = new QHBoxLayout(ovlGroup_);
+	auto *ovlScroll = new QScrollArea;
+	ovlScroll->setWidgetResizable(true);
+	ovlScroll->setFrameShape(QFrame::NoFrame);
+	ovlScroll->setFixedHeight(58);
 	auto *ovlInner = new QWidget;
 	ovlLayout_ = new QHBoxLayout(ovlInner);
 	ovlLayout_->setContentsMargins(0, 0, 0, 0);
 	ovlLayout_->setSpacing(8);
-	ovlOuter->addWidget(ovlInner, 1);
+	ovlScroll->setWidget(ovlInner);
+	ovlOuter->addWidget(ovlScroll, 1);
 	auto *addOvl = new QPushButton(QStringLiteral("＋ 新增疊加"));
 	addOvl->setObjectName(QStringLiteral("accent"));
 	auto *ovlMenu = new QMenu(addOvl);
@@ -528,7 +554,8 @@ QWidget *MainWindow::BuildSwitcher()
 	ovlCol->addWidget(addOvl);
 	ovlCol->addWidget(addExistingOvl);
 	ovlOuter->addLayout(ovlCol);
-	v->addWidget(ovlGroup_);
+	rv->addWidget(ovlGroup_);
+	rv->addStretch(1);
 	return w;
 }
 
@@ -872,6 +899,47 @@ void MainWindow::RebuildRows()
 		connect(b, &QPushButton::clicked, this, [this, id] { ToggleLayer(id); });
 		connect(b, &QPushButton::customContextMenuRequested, this,
 			[this, b, info](const QPoint &pos) { ShowLayerMenu(b, pos, info); });
+		Input *src = ov ? nullptr : engine_.FindInput(l.uid);
+		if (src && IsMediaInput(src)) {
+			// 影片／音樂／網路影片：按鈕下面加播放控制
+			auto *box = new QWidget;
+			auto *bv = new QVBoxLayout(box);
+			bv->setContentsMargins(0, 0, 0, 0);
+			bv->setSpacing(2);
+			bv->addWidget(b);
+			auto *ctl = new QHBoxLayout;
+			ctl->setSpacing(2);
+			const std::string uid = l.uid;
+			auto mk = [&](const QString &text, const QString &tip, auto fn) {
+				auto *mb = new QPushButton(text);
+				mb->setObjectName(QStringLiteral("mediaBtn"));
+				mb->setToolTip(tip);
+				mb->setFocusPolicy(Qt::NoFocus);
+				mb->setFixedHeight(24);
+				connect(mb, &QPushButton::clicked, this, [this, uid, fn] {
+					if (Input *in = engine_.FindInput(uid))
+						fn(in->source);
+					QTimer::singleShot(150, this, [this] { RefreshMediaLabels(); });
+				});
+				ctl->addWidget(mb);
+				return mb;
+			};
+			QPushButton *pp = mk(QStringLiteral("❚❚"), QStringLiteral("暫停／繼續播放"), [](obs_source_t *s) {
+				obs_source_media_play_pause(s, obs_source_media_get_state(s) == OBS_MEDIA_STATE_PLAYING);
+			});
+			pp->setProperty("media", Q(uid));
+			pp->setObjectName(QStringLiteral("mediaPlay"));
+			mk(QStringLiteral("■"), QStringLiteral("停止"), [](obs_source_t *s) { obs_source_media_stop(s); });
+			mk(QStringLiteral("↻"), QStringLiteral("從頭重播"), [](obs_source_t *s) { obs_source_media_restart(s); });
+			auto *time = new QLabel;
+			time->setObjectName(QStringLiteral("mediaTime"));
+			time->setProperty("media", Q(uid));
+			ctl->addWidget(time, 1);
+			bv->addLayout(ctl);
+			box->setMaximumWidth(260);
+			busLayout_->addWidget(box);
+			continue;
+		}
 		(ov ? ovlLayout_ : busLayout_)->addWidget(b);
 	}
 	if (nSrc == 0) {
@@ -887,6 +955,54 @@ void MainWindow::RebuildRows()
 	}
 	busLayout_->addStretch(1);
 	ovlLayout_->addStretch(1);
+	RefreshMediaLabels();
+}
+
+bool MainWindow::IsMediaInput(const Input *in)
+{
+	return in && in->source &&
+	       (obs_source_get_output_flags(in->source) & OBS_SOURCE_CONTROLLABLE_MEDIA) != 0;
+}
+
+// 媒體播放狀態與時間：▶ 播放中、⏸ 暫停、■ 停止
+void MainWindow::RefreshMediaLabels()
+{
+	auto fmt = [](int64_t ms) {
+		const int64_t t = std::max<int64_t>(0, ms) / 1000;
+		return t >= 3600 ? QStringLiteral("%1:%2:%3").arg(t / 3600).arg(t / 60 % 60, 2, 10, QLatin1Char('0')).arg(t % 60, 2, 10, QLatin1Char('0'))
+				 : QStringLiteral("%1:%2").arg(t / 60).arg(t % 60, 2, 10, QLatin1Char('0'));
+	};
+	for (QLabel *l : rowsPanel_->findChildren<QLabel *>(QStringLiteral("mediaTime"))) {
+		Input *in = engine_.FindInput(S(l->property("media").toString()));
+		if (!in || !in->source)
+			continue;
+		const obs_media_state st = obs_source_media_get_state(in->source);
+		const int64_t cur = obs_source_media_get_time(in->source), dur = obs_source_media_get_duration(in->source);
+		QString mark = st == OBS_MEDIA_STATE_PLAYING ? QStringLiteral("▶")
+			       : st == OBS_MEDIA_STATE_PAUSED ? QStringLiteral("⏸")
+			       : st == OBS_MEDIA_STATE_OPENING || st == OBS_MEDIA_STATE_BUFFERING ? QStringLiteral("…")
+			       : st == OBS_MEDIA_STATE_ERROR ? QStringLiteral("⚠")
+							     : QStringLiteral("■");
+		QString text = mark + QStringLiteral(" ") + fmt(cur);
+		if (dur > 0)
+			text += QStringLiteral(" / ") + fmt(dur);
+		else if (st == OBS_MEDIA_STATE_PLAYING)
+			text += QStringLiteral(" 直播");
+		if (l->text() != text)
+			l->setText(text);
+	}
+	// 播放中顯示「暫停」符號，其他狀態顯示「播放」符號
+	for (QPushButton *b : rowsPanel_->findChildren<QPushButton *>(QStringLiteral("mediaPlay"))) {
+		Input *in = engine_.FindInput(S(b->property("media").toString()));
+		if (!in || !in->source)
+			continue;
+		const bool playing = obs_source_media_get_state(in->source) == OBS_MEDIA_STATE_PLAYING;
+		const QString t = playing ? QStringLiteral("❚❚") : QStringLiteral("▶");
+		if (b->text() != t) {
+			b->setText(t);
+			b->setToolTip(playing ? QStringLiteral("暫停") : QStringLiteral("播放"));
+		}
+	}
 }
 
 void MainWindow::RebuildBus()
@@ -967,7 +1083,10 @@ void MainWindow::RefreshBusState()
 	const bool live = cur && pgm == cur;
 	for (QHBoxLayout *lay : {busLayout_, ovlLayout_}) {
 		for (int i = 0; i < lay->count(); i++) {
-			auto *b = qobject_cast<QPushButton *>(lay->itemAt(i)->widget());
+			QWidget *w = lay->itemAt(i)->widget();
+			auto *b = qobject_cast<QPushButton *>(w);
+			if (!b && w) // 媒體訊號源：按鈕包在含播放控制的方塊裡
+				b = w->findChild<QPushButton *>(QStringLiteral("busButton"));
 			if (!b)
 				continue;
 			const int64_t id = b->property("layer").toLongLong();
@@ -1057,18 +1176,38 @@ void MainWindow::AddSourceOfType(const QString &kind)
 	} else if (kind == QLatin1String("url")) {
 		bool ok = false;
 		const QString url = QInputDialog::getText(
-			this, QStringLiteral("加入網路影片"),
-			QStringLiteral("網址（rtmp://、srt://、rtsp://、https://….m3u8 或影片網址）："), QLineEdit::Normal,
-			QString(), &ok);
-		if (!ok || url.trimmed().isEmpty()) {
+				    this, QStringLiteral("加入網路影片"),
+				    QStringLiteral("貼上網址：YouTube、Facebook 影片或直播網址，\n"
+						   "或 rtmp://、srt://、rtsp://、https://….m3u8 串流網址"),
+				    QLineEdit::Normal, QString(), &ok)
+					    .trimmed();
+		if (!ok || url.isEmpty()) {
 			cancel();
 			return;
 		}
 		type = "ffmpeg_source";
 		name = "網路影片 " + countOf(type);
 		obs_data_set_bool(s, "is_local_file", false);
-		obs_data_set_string(s, "input", S(url.trimmed()).c_str());
-		obs_data_set_bool(s, "restart_on_activate", false);
+		bool live = true;
+		QString playUrl = url;
+		if (IsPageUrl(url)) {
+			// YouTube／Facebook 等網頁網址：先解析成可以播放的串流網址
+			ResolvedMedia media;
+			QString err;
+			if (!ResolveWithUi(this, url, media, err)) {
+				QMessageBox::warning(this, windowTitle(), QStringLiteral("這個網址無法播放：\n%1").arg(err));
+				cancel();
+				return;
+			}
+			playUrl = media.url;
+			live = media.live;
+			obs_data_set_string(s, "meikou_page_url", S(url).c_str()); // 串流網址會過期，下次開啟時重新解析
+			if (!media.title.isEmpty())
+				name = S(media.title.left(24));
+		}
+		obs_data_set_string(s, "input", S(playUrl).c_str());
+		// 影片：送出時從頭播放；直播：保持連線不重來
+		obs_data_set_bool(s, "restart_on_activate", !live);
 		obs_data_set_bool(s, "close_when_inactive", false);
 		obs_data_set_int(s, "reconnect_delay_sec", 3);
 		obs_data_set_int(s, "buffering_mb", 1);
@@ -1646,6 +1785,7 @@ void MainWindow::ApplyFps()
 void MainWindow::UpdateStats()
 {
 	engine_.Tick();
+	RefreshMediaLabels();
 	const Stats s = engine_.QueryStats();
 	clockLabel_->setText(QTime::currentTime().toString(QStringLiteral("HH:mm:ss")));
 
@@ -1738,6 +1878,8 @@ void MainWindow::LoadSettings()
 	appliedFpsIndex_ = std::clamp(st.value("output/fpsIndex", 3).toInt(), 0, kFpsCount - 1);
 	fpsBox_->setCurrentIndex(appliedFpsIndex_);
 	restoreGeometry(st.value("window/geometry").toByteArray());
+	mainSplit_->restoreState(st.value("window/mainSplit2").toByteArray());
+	bottomSplit_->restoreState(st.value("window/bottomSplit2").toByteArray());
 }
 
 void MainWindow::SaveSettings()
@@ -1748,6 +1890,42 @@ void MainWindow::SaveSettings()
 	st.setValue("output/lowLatency", lowLatencyBox_->isChecked());
 	st.setValue("output/dynBitrate", dynBitrateBox_->isChecked());
 	st.setValue("output/fpsIndex", appliedFpsIndex_);
+}
+
+// YouTube／Facebook 的串流網址幾個小時就會過期：開啟專案時用原本的網頁網址重新解析
+void MainWindow::RefreshPageStreams()
+{
+	for (const auto &up : engine_.Inputs()) {
+		Input *in = up.get();
+		if (!in->source || in->typeId != "ffmpeg_source")
+			continue;
+		obs_data_t *st = obs_source_get_settings(in->source);
+		const QString page = QString::fromUtf8(obs_data_get_string(st, "meikou_page_url"));
+		obs_data_release(st);
+		if (page.isEmpty())
+			continue;
+		if (!ToolsReady()) {
+			outputStatus_->setText(QStringLiteral("「%1」是網頁影片，需要解析工具：請刪除後重新加入一次。").arg(Q(in->name)));
+			continue;
+		}
+		const std::string uid = in->uid;
+		outputStatus_->setText(QStringLiteral("正在更新「%1」的影片串流…").arg(Q(in->name)));
+		ResolveInBackground(this, page, [this, uid](bool ok, const ResolvedMedia &media, const QString &err) {
+			Input *target = engine_.FindInput(uid);
+			if (!target || !target->source)
+				return;
+			if (!ok) {
+				outputStatus_->setText(QStringLiteral("「%1」無法播放：%2").arg(Q(target->name), err));
+				return;
+			}
+			obs_data_t *u = obs_data_create();
+			obs_data_set_string(u, "input", S(media.url).c_str());
+			obs_data_set_bool(u, "restart_on_activate", !media.live);
+			obs_source_update(target->source, u);
+			obs_data_release(u);
+			outputStatus_->setText(QStringLiteral("「%1」已就緒。").arg(Q(target->name)));
+		});
+	}
 }
 
 void MainWindow::OpenUpdateDialog(bool useKnownRelease)
@@ -1823,6 +2001,8 @@ void MainWindow::closeEvent(QCloseEvent *event)
 	SaveSettings();
 	SaveProject();
 	QSettings().setValue("window/geometry", saveGeometry());
+	QSettings().setValue("window/mainSplit2", mainSplit_->saveState());
+	QSettings().setValue("window/bottomSplit2", bottomSplit_->saveState());
 	statsTimer_->stop();
 	saveTimer_->stop();
 	pvwDisplay_->DestroyDisplay();

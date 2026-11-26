@@ -6,6 +6,7 @@
 
 class QCheckBox;
 class QComboBox;
+class QFormLayout;
 class QLabel;
 class QLineEdit;
 class QPushButton;
@@ -38,6 +39,10 @@ private:
 	QComboBox *slant_ = nullptr;
 	QComboBox *orient_ = nullptr;
 	QComboBox *textPos_ = nullptr;
+	QComboBox *decor_ = nullptr;        // 純文字的裝飾
+	QPushButton *strokeBtn_ = nullptr;  // 邊框顏色
+	QFormLayout *form_ = nullptr;
+	void UpdatePlainRows();
 	QPushButton *c1_ = nullptr, *c2_ = nullptr, *tc_ = nullptr;
 	QSpinBox *size_ = nullptr, *opacity_ = nullptr;
 	QSlider *speed_ = nullptr;

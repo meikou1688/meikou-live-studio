@@ -30,6 +30,9 @@ struct GraphicSpec {
 	bool italic = false; // 字形：false 正體、true 斜體
 	bool vertical = false; // 姓名條方向：false 橫式、true 直式
 	std::string textPos = "right"; // 台標文字位置：right／left／top／bottom
+	// 「純文字（透明背景）」版型的裝飾：none 無／shadow 陰影／stroke 邊框／both 邊框＋陰影
+	std::string decor = "none";
+	uint32_t strokeColor = 0xFF000000; // 邊框顏色
 };
 
 struct StyleChoice {

@@ -60,6 +60,7 @@ OverlayDialog::OverlayDialog(const GraphicSpec &spec, const QString &name, QWidg
 	auto *root = new QHBoxLayout(this);
 	auto *left = new QVBoxLayout;
 	auto *form = new QFormLayout;
+	form_ = form;
 	left->addLayout(form);
 	root->addLayout(left, 0);
 
@@ -161,9 +162,26 @@ OverlayDialog::OverlayDialog(const GraphicSpec &spec, const QString &name, QWidg
 				opacity_->setValue(spec_.opacity);
 			if (slant_)
 				slant_->setCurrentIndex(spec_.italic ? 1 : 0);
+			if (decor_)
+				decor_->setCurrentIndex(std::max(0, decor_->findData(Q(spec_.decor))));
 			UpdateColorButtons();
+			UpdatePlainRows();
 			UpdatePreview();
 		});
+		// 純文字（透明背景）：可以不加裝飾，或加陰影、邊框、邊框＋陰影；邊框顏色可選
+		decor_ = new QComboBox;
+		const char *decos[][2] = {{"不加裝飾", "none"}, {"陰影", "shadow"}, {"邊框", "stroke"}, {"邊框＋陰影", "both"}};
+		for (const auto &dc : decos)
+			decor_->addItem(QString::fromUtf8(dc[0]), QString::fromLatin1(dc[1]));
+		decor_->setCurrentIndex(std::max(0, decor_->findData(Q(spec_.decor))));
+		connect(decor_, &QComboBox::activated, this, [this](int) {
+			UpdatePlainRows();
+			UpdatePreview();
+		});
+		strokeBtn_ = new QPushButton;
+		connect(strokeBtn_, &QPushButton::clicked, this, [this] { PickColor(spec_.strokeColor); });
+		form->addRow(QStringLiteral("裝飾"), decor_);
+		form->addRow(QStringLiteral("邊框顏色"), strokeBtn_);
 	}
 
 	if (k != "image") {
@@ -267,6 +285,7 @@ OverlayDialog::OverlayDialog(const GraphicSpec &spec, const QString &name, QWidg
 			connect(c, &QCheckBox::toggled, this, refresh);
 	if (speed_)
 		connect(speed_, &QSlider::valueChanged, this, refresh);
+	UpdatePlainRows();
 	if (k == "clock") {
 		clockTimer_ = new QTimer(this);
 		connect(clockTimer_, &QTimer::timeout, this, refresh);
@@ -301,6 +320,8 @@ void OverlayDialog::Collect()
 		spec_.vertical = orient_->currentIndex() == 1;
 	if (textPos_)
 		spec_.textPos = S(textPos_->currentData().toString());
+	if (decor_)
+		spec_.decor = S(decor_->currentData().toString());
 	if (opacity_)
 		spec_.opacity = opacity_->value();
 	if (speed_)
@@ -326,6 +347,22 @@ void OverlayDialog::UpdateColorButtons()
 	paint(c1_, spec_.color, QStringLiteral("主色"));
 	paint(c2_, spec_.color2, QStringLiteral("輔色"));
 	paint(tc_, spec_.textColor, QStringLiteral("文字"));
+	paint(strokeBtn_, spec_.strokeColor, QStringLiteral("邊框顏色"));
+}
+
+void OverlayDialog::UpdatePlainRows()
+{
+	if (!form_ || !decor_)
+		return;
+	const bool plain = spec_.style == "plain";
+	const QString dc = decor_->currentData().toString();
+	form_->setRowVisible(decor_, plain);
+	form_->setRowVisible(strokeBtn_, plain && (dc == QLatin1String("stroke") || dc == QLatin1String("both")));
+	// 純文字只用「文字」顏色，主色／輔色沒有作用
+	if (c1_)
+		c1_->setEnabled(!plain);
+	if (c2_)
+		c2_->setEnabled(!plain);
 }
 
 void OverlayDialog::PickColor(uint32_t &target)
