@@ -15,7 +15,11 @@ inline constexpr const char *kAudioOut = "wasapi_output_capture";
 inline constexpr const char *kAppAudio = "wasapi_process_output_capture";
 inline constexpr bool kTextIsGdi = true;
 #elif defined(__APPLE__)
-inline constexpr const char *kGraphicsModule = "libobs-opengl";
+// macOS 要給完整檔名（libobs-opengl.dylib），只給名稱的話 libobs 會去找 .so 而啟動失敗
+#ifndef MEIKOU_DL_OPENGL
+#define MEIKOU_DL_OPENGL "libobs-opengl.dylib"
+#endif
+inline constexpr const char *kGraphicsModule = MEIKOU_DL_OPENGL;
 inline constexpr const char *kCamera = "macos-avcapture";
 inline constexpr const char *kScreen = "screen_capture";
 inline constexpr const char *kWindow = "screen_capture";

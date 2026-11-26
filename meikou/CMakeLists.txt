@@ -69,6 +69,10 @@ set_target_properties(
 set_target_properties_obs(obs-studio PROPERTIES FOLDER meikou OUTPUT_NAME meikou-live-studio)
 
 if(OS_MACOS)
+  # 和 OBS 官方介面一樣，用實際的 dylib 檔名載入繪圖引擎
+  if(TARGET OBS::libobs-opengl)
+    target_compile_definitions(obs-studio PRIVATE MEIKOU_DL_OPENGL="$<TARGET_SONAME_FILE_NAME:OBS::libobs-opengl>")
+  endif()
   target_sources(obs-studio PRIVATE ${MEIKOU_FONTS})
   set_source_files_properties(${MEIKOU_FONTS} PROPERTIES MACOSX_PACKAGE_LOCATION Resources/fonts)
 else()
