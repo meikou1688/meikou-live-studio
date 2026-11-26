@@ -19,7 +19,9 @@
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonObject>
+#include <QLineEdit>
 #include <QListWidget>
+#include <QTabWidget>
 #include <QPushButton>
 #include <QStandardPaths>
 #include <QSysInfo>
@@ -726,6 +728,19 @@ int RunSelfTest(QApplication &app, const QString &configDir, const QString &repo
 	rep.Section(QStringLiteral("介面"));
 	{
 		const QString projectPath = QDir(configDir).filePath(QStringLiteral("selftest-project.json"));
+		{
+			// 推流目標：一個填好（應該收合成摘要）、一個還沒填金鑰（應該展開）
+			engine.Targets().clear();
+			Target yt;
+			yt.name = "YouTube";
+			yt.server = "rtmp://a.rtmp.youtube.com/live2";
+			yt.key = "abcd-efgh-ijkl-mnop-qrst";
+			Target custom;
+			custom.name = "自訂 RTMP／RTMPS";
+			custom.server = "rtmps://live-api-s.facebook.com:443/rtmp/";
+			engine.Targets().push_back(yt);
+			engine.Targets().push_back(custom);
+		}
 		auto *window = new MainWindow(engine, projectPath);
 		window->resize(1600, 940);
 		window->show();
@@ -733,6 +748,40 @@ int RunSelfTest(QApplication &app, const QString &configDir, const QString &repo
 		const QImage ui = window->grab().toImage();
 		ui.save(QDir(shotsDir).filePath(QStringLiteral("ui.png")));
 		rep.Check(QStringLiteral("主視窗開啟"), !ui.isNull() && ui.width() > 800, QStringLiteral("ui.png"));
+
+		// 推流目標：網址、金鑰上下排列、完整寬度；填好的收合，點摘要展開
+		if (auto *tabs = window->findChild<QTabWidget *>()) {
+			for (int i = 0; i < tabs->count(); i++)
+				if (tabs->tabText(i).contains(QStringLiteral("推流")))
+					tabs->setCurrentIndex(i);
+		}
+		pump(400);
+		int cards = 0, summaries = 0, wideFields = 0;
+		for (QFrame *f : window->findChildren<QFrame *>())
+			cards += f->objectName() == QLatin1String("targetCard") ? 1 : 0;
+		QPushButton *firstSummary = nullptr;
+		for (QPushButton *b : window->findChildren<QPushButton *>()) {
+			if (b->objectName() == QLatin1String("targetSummary") && b->isVisible()) {
+				summaries++;
+				if (!firstSummary)
+					firstSummary = b;
+			}
+		}
+		for (QLineEdit *e : window->findChildren<QLineEdit *>())
+			wideFields += (e->isVisible() && e->width() >= 280) ? 1 : 0;
+		window->grab().toImage().save(QDir(shotsDir).filePath(QStringLiteral("ui-targets.png")));
+		rep.Check(QStringLiteral("推流目標：填好的收合、沒填完的展開，欄位夠寬"), cards == 2 && summaries == 1 && wideFields >= 2,
+			  QStringLiteral("%1 張卡片、%2 個收合、%3 個寬欄位").arg(cards).arg(summaries).arg(wideFields));
+		if (firstSummary) {
+			emit firstSummary->clicked();
+			pump(300);
+		}
+		int stillCollapsed = 0;
+		for (QPushButton *b : window->findChildren<QPushButton *>())
+			stillCollapsed += (b->objectName() == QLatin1String("targetSummary") && b->isVisible()) ? 1 : 0;
+		window->grab().toImage().save(QDir(shotsDir).filePath(QStringLiteral("ui-targets-open.png")));
+		rep.Check(QStringLiteral("點摘要展開完整網址與金鑰"), stillCollapsed == 0);
+		engine.Targets().clear();
 
 		// 點不同場景，下面兩列只顯示該場景的訊號源與疊加
 		auto countButtons = [window](const char *name) {

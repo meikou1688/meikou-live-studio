@@ -4,16 +4,20 @@
 
 #include <QMainWindow>
 
+#include <vector>
+
 class QCheckBox;
 class QGroupBox;
 class QComboBox;
 class QGridLayout;
 class QHBoxLayout;
 class QLabel;
+class QLineEdit;
 class QListWidget;
 class QPushButton;
 class QSpinBox;
 class QTableWidget;
+class QVBoxLayout;
 class QTimer;
 
 namespace meikou {
@@ -101,7 +105,18 @@ private:
 	QListWidget *overlayList_ = nullptr;
 	AudioMixer *mixer_ = nullptr;
 
-	QTableWidget *targetTable_ = nullptr;
+	QWidget *targetBox_ = nullptr; // 推流目標卡片的容器
+	QVBoxLayout *targetLayout_ = nullptr;
+	struct TargetRow {
+		QLineEdit *server = nullptr;
+		QLineEdit *key = nullptr;
+		QLabel *status = nullptr;
+		QPushButton *summary = nullptr;
+		QWidget *detail = nullptr;
+	};
+	std::vector<TargetRow> targetRows_;
+	void SetTargetExpanded(int row, bool expanded);
+	void UpdateTargetSummary(int row);
 	QComboBox *encoderBox_ = nullptr;
 	QSpinBox *bitrateBox_ = nullptr;
 	QComboBox *fpsBox_ = nullptr;

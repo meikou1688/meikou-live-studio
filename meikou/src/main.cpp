@@ -56,6 +56,10 @@ QTabBar::tab { background: #1c1e26; padding: 8px 14px; border: 1px solid #2a2d38
 QTabBar::tab:selected { background: #2a2d38; color: white; border-bottom: 2px solid #00e5c0; }
 QListWidget, QTableWidget, QLineEdit, QSpinBox, QComboBox { background: #20222b; border: 1px solid #3a3e4c; border-radius: 4px; padding: 3px; }
 QHeaderView::section { background: #1c1e26; border: none; padding: 4px; color: #b8bdc9; }
+QFrame#targetCard { background: #1c1e26; border: 1px solid #2a2d38; border-radius: 6px; }
+QPushButton#targetSummary { text-align: left; background: #20222b; border: 1px dashed #3a3e4c; padding: 6px 10px; color: #b8bdc9; }
+QPushButton#targetSummary:hover { border-color: #00e5c0; color: #e6e8ec; }
+QLineEdit { padding: 5px; }
 )";
 
 void ApplyDarkTheme(QApplication &app)

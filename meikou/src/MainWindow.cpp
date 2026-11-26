@@ -599,21 +599,14 @@ QWidget *MainWindow::BuildOutputTab()
 
 	auto *tg = new QGroupBox(QStringLiteral("推流目標（可同時推多個平台，只編碼一次）"));
 	auto *tv = new QVBoxLayout(tg);
-	targetTable_ = new QTableWidget(0, 5);
-	targetTable_->setHorizontalHeaderLabels({QStringLiteral("啟用"), QStringLiteral("平台"),
-						 QStringLiteral("伺服器"), QStringLiteral("串流金鑰"),
-						 QStringLiteral("狀態")});
-	targetTable_->horizontalHeader()->setSectionResizeMode(2, QHeaderView::Stretch);
-	targetTable_->horizontalHeader()->setSectionResizeMode(4, QHeaderView::ResizeToContents);
-	targetTable_->verticalHeader()->setVisible(false);
-	targetTable_->setSelectionBehavior(QAbstractItemView::SelectRows);
-	targetTable_->setMinimumHeight(150);
-	tv->addWidget(targetTable_);
+	targetBox_ = new QWidget;
+	targetLayout_ = new QVBoxLayout(targetBox_);
+	targetLayout_->setContentsMargins(0, 0, 0, 0);
+	targetLayout_->setSpacing(8);
+	tv->addWidget(targetBox_);
 	auto *trow = new QHBoxLayout;
 	auto *addT = new QPushButton(QStringLiteral("＋ 新增目標"));
-	auto *delT = new QPushButton(QStringLiteral("移除選取"));
 	trow->addWidget(addT);
-	trow->addWidget(delT);
 	trow->addStretch(1);
 	tv->addLayout(trow);
 	connect(addT, &QPushButton::clicked, this, [this] {
@@ -623,15 +616,6 @@ QWidget *MainWindow::BuildOutputTab()
 		t.name = kPlatforms[0].name;
 		t.server = kPlatforms[0].server;
 		engine_.Targets().push_back(t);
-		RebuildTargets();
-		ScheduleSave();
-	});
-	connect(delT, &QPushButton::clicked, this, [this] {
-		const int r = targetTable_->currentRow();
-		auto &ts = engine_.Targets();
-		if (r < 0 || r >= (int)ts.size() || engine_.Streaming())
-			return;
-		ts.erase(ts.begin() + r);
 		RebuildTargets();
 		ScheduleSave();
 	});
@@ -1338,25 +1322,33 @@ void MainWindow::DoAuto()
 	ScheduleSave();
 }
 
+// 推流目標：每個目標一張卡片。上面一列是啟用／平台／狀態，下面是網址與金鑰（上下排列、完整寬度）。
+// 填好後可以收合成一行摘要，點摘要就展開修改。
 void MainWindow::RebuildTargets()
 {
+	while (QLayoutItem *it = targetLayout_->takeAt(0)) {
+		delete it->widget();
+		delete it;
+	}
+	targetRows_.clear();
 	auto &ts = engine_.Targets();
-	targetTable_->clearContents();
-	targetTable_->setRowCount((int)ts.size());
+	targetRows_.resize(ts.size());
 	for (int r = 0; r < (int)ts.size(); r++) {
-		auto *en = new QCheckBox;
+		auto *card = new QFrame;
+		card->setObjectName(QStringLiteral("targetCard"));
+		auto *cv = new QVBoxLayout(card);
+		cv->setContentsMargins(10, 8, 10, 10);
+		cv->setSpacing(6);
+
+		// 第一列：啟用、平台、狀態、移除
+		auto *head = new QHBoxLayout;
+		auto *en = new QCheckBox(QStringLiteral("啟用"));
 		en->setChecked(ts[r].enabled);
 		connect(en, &QCheckBox::toggled, this, [this, r](bool on) {
 			if (r < (int)engine_.Targets().size())
 				engine_.Targets()[r].enabled = on;
 			ScheduleSave();
 		});
-		auto *cell = new QWidget;
-		auto *cl = new QHBoxLayout(cell);
-		cl->setContentsMargins(6, 0, 0, 0);
-		cl->addWidget(en);
-		targetTable_->setCellWidget(r, 0, cell);
-
 		auto *plat = new QComboBox;
 		for (const auto &p : kPlatforms)
 			plat->addItem(QString::fromUtf8(p.name), QString::fromUtf8(p.server));
@@ -1365,51 +1357,155 @@ void MainWindow::RebuildTargets()
 			if (plat->itemData(i).toString() == Q(ts[r].server))
 				idx = i;
 		plat->setCurrentIndex(idx);
-		targetTable_->setCellWidget(r, 1, plat);
+		auto *status = new QLabel(Q(ts[r].status));
+		status->setObjectName(QStringLiteral("hint"));
+		auto *del = new QPushButton(QStringLiteral("移除"));
+		del->setToolTip(QStringLiteral("移除這個推流目標"));
+		head->addWidget(en);
+		head->addWidget(plat, 1);
+		head->addWidget(status);
+		head->addWidget(del);
+		cv->addLayout(head);
 
+		// 收合時的摘要：點一下展開
+		auto *summary = new QPushButton;
+		summary->setObjectName(QStringLiteral("targetSummary"));
+		summary->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Preferred);
+		summary->setCursor(Qt::PointingHandCursor);
+		summary->setToolTip(QStringLiteral("點一下展開修改網址與金鑰"));
+		cv->addWidget(summary);
+
+		// 展開時：網址、金鑰上下排列，完整寬度
+		auto *detail = new QWidget;
+		auto *dv = new QVBoxLayout(detail);
+		dv->setContentsMargins(0, 0, 0, 0);
+		dv->setSpacing(4);
+		dv->addWidget(new QLabel(QStringLiteral("伺服器網址")));
 		auto *server = new QLineEdit(Q(ts[r].server));
-		server->setPlaceholderText(QStringLiteral("rtmp://…"));
-		targetTable_->setCellWidget(r, 2, server);
+		server->setPlaceholderText(QStringLiteral("rtmp://… 或 rtmps://…"));
+		server->setClearButtonEnabled(true);
+		dv->addWidget(server);
+		dv->addSpacing(4);
+		dv->addWidget(new QLabel(QStringLiteral("串流金鑰（只存在這台電腦）")));
+		auto *keyRow = new QHBoxLayout;
 		auto *key = new QLineEdit(Q(ts[r].key));
-		key->setEchoMode(QLineEdit::PasswordEchoOnEdit);
+		key->setEchoMode(QLineEdit::Password);
 		key->setPlaceholderText(QStringLiteral("貼上串流金鑰"));
-		targetTable_->setCellWidget(r, 3, key);
-		targetTable_->setItem(r, 4, new QTableWidgetItem(Q(ts[r].status)));
+		auto *show = new QPushButton(QStringLiteral("顯示"));
+		show->setCheckable(true);
+		show->setToolTip(QStringLiteral("暫時顯示金鑰內容，方便核對"));
+		connect(show, &QPushButton::toggled, this, [key, show](bool on) {
+			key->setEchoMode(on ? QLineEdit::Normal : QLineEdit::Password);
+			show->setText(on ? QStringLiteral("隱藏") : QStringLiteral("顯示"));
+		});
+		keyRow->addWidget(key, 1);
+		keyRow->addWidget(show);
+		dv->addLayout(keyRow);
+		auto *done = new QPushButton(QStringLiteral("完成（收合）"));
+		auto *doneRow = new QHBoxLayout;
+		doneRow->addStretch(1);
+		doneRow->addWidget(done);
+		dv->addLayout(doneRow);
+		cv->addWidget(detail);
 
+		targetRows_[r] = {server, key, status, summary, detail};
+
+		connect(summary, &QPushButton::clicked, this, [this, r, server] {
+			SetTargetExpanded(r, true);
+			server->setFocus();
+		});
+		connect(done, &QPushButton::clicked, this, [this, r, server, key, show] {
+			if (r < (int)engine_.Targets().size()) {
+				engine_.Targets()[r].server = S(server->text().trimmed());
+				engine_.Targets()[r].key = S(key->text().trimmed());
+			}
+			show->setChecked(false);
+			ScheduleSave();
+			SetTargetExpanded(r, false);
+		});
+		connect(del, &QPushButton::clicked, this, [this, r] {
+			auto &list = engine_.Targets();
+			if (r >= (int)list.size() || engine_.Streaming())
+				return;
+			if (QMessageBox::question(this, windowTitle(),
+						  QStringLiteral("確定要移除「%1」這個推流目標嗎？").arg(Q(list[r].name))) !=
+			    QMessageBox::Yes)
+				return;
+			list.erase(list.begin() + r);
+			QTimer::singleShot(0, this, [this] { RebuildTargets(); });
+			ScheduleSave();
+		});
 		connect(plat, &QComboBox::activated, this, [this, r, plat, server](int) {
-			const QString s = plat->currentData().toString();
-			if (!s.isEmpty())
-				server->setText(s);
+			const QString sv = plat->currentData().toString();
+			if (!sv.isEmpty())
+				server->setText(sv);
 			if (r < (int)engine_.Targets().size()) {
 				engine_.Targets()[r].server = S(server->text().trimmed());
 				engine_.Targets()[r].name = S(plat->currentText());
 			}
+			UpdateTargetSummary(r);
 			ScheduleSave();
 		});
 		connect(server, &QLineEdit::editingFinished, this, [this, r, server] {
 			if (r < (int)engine_.Targets().size())
 				engine_.Targets()[r].server = S(server->text().trimmed());
+			UpdateTargetSummary(r);
 			ScheduleSave();
 		});
 		connect(key, &QLineEdit::editingFinished, this, [this, r, key] {
 			if (r < (int)engine_.Targets().size())
 				engine_.Targets()[r].key = S(key->text().trimmed());
+			UpdateTargetSummary(r);
 			ScheduleSave();
 		});
+
+		targetLayout_->addWidget(card);
+		UpdateTargetSummary(r);
+		// 還沒填完的目標展開，填好的收合成一行
+		SetTargetExpanded(r, ts[r].server.empty() || ts[r].key.empty());
 	}
+	if (ts.empty()) {
+		auto *hint = new QLabel(QStringLiteral("還沒有推流目標。按「＋ 新增目標」加入 YouTube、Facebook、Twitch 或自訂伺服器。"));
+		hint->setObjectName(QStringLiteral("hint"));
+		hint->setWordWrap(true);
+		targetLayout_->addWidget(hint);
+	}
+}
+
+void MainWindow::SetTargetExpanded(int row, bool expanded)
+{
+	if (row < 0 || row >= (int)targetRows_.size())
+		return;
+	targetRows_[row].detail->setVisible(expanded);
+	targetRows_[row].summary->setVisible(!expanded);
+}
+
+void MainWindow::UpdateTargetSummary(int row)
+{
+	if (row < 0 || row >= (int)targetRows_.size())
+		return;
+	const TargetRow &tr = targetRows_[row];
+	const QString server = tr.server->text().trimmed();
+	const QString key = tr.key->text().trimmed();
+	QString keyText;
+	if (key.isEmpty())
+		keyText = QStringLiteral("金鑰：尚未填寫");
+	else
+		keyText = QStringLiteral("金鑰：已填（••••%1）").arg(key.right(4));
+	tr.summary->setText(QStringLiteral("%1\n%2　　✎ 點一下修改")
+				    .arg(server.isEmpty() ? QStringLiteral("伺服器網址：尚未填寫") : server, keyText));
+	tr.summary->setToolTip(server);
 }
 
 void MainWindow::RefreshTargetStatus()
 {
 	auto &ts = engine_.Targets();
-	for (int r = 0; r < (int)ts.size() && r < targetTable_->rowCount(); r++) {
+	for (int r = 0; r < (int)ts.size() && r < (int)targetRows_.size(); r++) {
 		QString st = Q(ts[r].status);
 		if (ts[r].active && !ts[r].reconnecting)
 			st = QStringLiteral("推流中 %1 kbps").arg(ts[r].kbps, 0, 'f', 0);
-		if (auto *it = targetTable_->item(r, 4)) {
-			if (it->text() != st)
-				it->setText(st);
-		}
+		if (QLabel *l = targetRows_[r].status; l && l->text() != st)
+			l->setText(st);
 	}
 }
 
@@ -1436,11 +1532,11 @@ void MainWindow::ToggleStream()
 	}
 	// 先把表格裡還沒離開欄位的內容寫回去
 	auto &ts = engine_.Targets();
-	for (int r = 0; r < (int)ts.size(); r++) {
-		if (auto *s = qobject_cast<QLineEdit *>(targetTable_->cellWidget(r, 2)))
-			ts[r].server = S(s->text().trimmed());
-		if (auto *k = qobject_cast<QLineEdit *>(targetTable_->cellWidget(r, 3)))
-			ts[r].key = S(k->text().trimmed());
+	for (int r = 0; r < (int)ts.size() && r < (int)targetRows_.size(); r++) {
+		ts[r].server = S(targetRows_[r].server->text().trimmed());
+		ts[r].key = S(targetRows_[r].key->text().trimmed());
+		UpdateTargetSummary(r);
+		SetTargetExpanded(r, false);
 	}
 	SaveSettings();
 	SaveProject();
@@ -1581,7 +1677,7 @@ void MainWindow::UpdateStats()
 	fpsBox_->setEnabled(!busy);
 	lowLatencyBox_->setEnabled(!busy);
 	dynBitrateBox_->setEnabled(!busy);
-	targetTable_->setEnabled(!s.streaming);
+	targetBox_->setEnabled(!s.streaming);
 
 	statsLabel_->setText(QStringLiteral("CPU %1%　%2 fps　渲染掉格 %3　編碼掉格 %4")
 				     .arg(s.cpu, 0, 'f', 0)
