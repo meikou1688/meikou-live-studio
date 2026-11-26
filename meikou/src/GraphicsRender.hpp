@@ -27,6 +27,7 @@ struct GraphicSpec {
 	int speed = 120;   // 跑馬燈速度（像素／秒）
 	int opacity = 100; // 不透明度 %
 	int size = 100;    // 字級 %
+	bool italic = false; // 字形：false 正體、true 斜體
 };
 
 struct StyleChoice {

@@ -139,6 +139,8 @@ OverlayDialog::OverlayDialog(const GraphicSpec &spec, const QString &name, QWidg
 			ApplyStyleColors(spec_); // 換版型時套用建議配色，之後仍可自己改
 			if (opacity_)
 				opacity_->setValue(spec_.opacity);
+			if (slant_)
+				slant_->setCurrentIndex(spec_.italic ? 1 : 0);
 			UpdateColorButtons();
 			UpdatePreview();
 		});
@@ -164,6 +166,13 @@ OverlayDialog::OverlayDialog(const GraphicSpec &spec, const QString &name, QWidg
 		size_->setSuffix(QStringLiteral(" %"));
 		size_->setValue(spec_.size);
 		form->addRow(QStringLiteral("字級"), size_);
+
+		slant_ = new QComboBox;
+		slant_->addItem(QStringLiteral("正體"));
+		slant_->addItem(QStringLiteral("斜體"));
+		slant_->setCurrentIndex(spec_.italic ? 1 : 0);
+		form->addRow(QStringLiteral("字形"), slant_);
+		connect(slant_, &QComboBox::activated, this, [this](int) { UpdatePreview(); });
 	}
 	opacity_ = new QSpinBox;
 	opacity_->setRange(5, 100);
@@ -239,6 +248,8 @@ void OverlayDialog::Collect()
 		spec_.style = S(style_->currentData().toString());
 	if (size_)
 		spec_.size = size_->value();
+	if (slant_)
+		spec_.italic = slant_->currentIndex() == 1;
 	if (opacity_)
 		spec_.opacity = opacity_->value();
 	if (speed_)

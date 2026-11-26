@@ -194,7 +194,7 @@ QImage RenderLower(const GraphicSpec &g)
 	const double pad = 24 * s;
 
 	if (g.style == "clean") {
-		const QFont nf = Font(58 * s, QFont::Black), tf = Font(30 * s, QFont::Bold);
+		const QFont nf = Font(58 * s, QFont::Black, g.italic), tf = Font(30 * s, QFont::Bold, g.italic);
 		const double bar = 12 * s, inX = 34 * s, inY = 18 * s;
 		const double contentW = std::max(TextW(nf, name), TextW(tf, title));
 		const double nh = QFontMetricsF(nf).height(), th = title.isEmpty() ? 0 : QFontMetricsF(tf).height();
@@ -219,7 +219,7 @@ QImage RenderLower(const GraphicSpec &g)
 	}
 
 	if (g.style == "sport") {
-		const QFont nf = Font(60 * s, QFont::Black, true), tf = Font(32 * s, QFont::Bold, true);
+		const QFont nf = Font(60 * s, QFont::Black, g.italic), tf = Font(32 * s, QFont::Bold, g.italic);
 		const double slant = 34 * s, nh = 92 * s, th = 54 * s;
 		const double nw = TextW(nf, name) + 70 * s + slant, tw = TextW(tf, title) + 60 * s + slant;
 		const double tOff = 46 * s;
@@ -247,7 +247,7 @@ QImage RenderLower(const GraphicSpec &g)
 	}
 
 	if (g.style == "pill") {
-		const QFont nf = Font(50 * s, QFont::Black), tf = Font(32 * s, QFont::Bold);
+		const QFont nf = Font(50 * s, QFont::Black, g.italic), tf = Font(32 * s, QFont::Bold, g.italic);
 		const double h = 92 * s, dot = 14 * s;
 		const double nw = TextW(nf, name), tw = TextW(tf, title);
 		const double gap = title.isEmpty() ? 0 : 40 * s;
@@ -283,7 +283,7 @@ QImage RenderLower(const GraphicSpec &g)
 	}
 
 	if (g.style == "outline") {
-		const QFont nf = Font(70 * s, QFont::Black), tf = Font(36 * s, QFont::Black);
+		const QFont nf = Font(70 * s, QFont::Black, g.italic), tf = Font(36 * s, QFont::Black, g.italic);
 		const double sw = 10 * s;
 		const double nw = TextW(nf, name), tw = TextW(tf, title);
 		const double nh = QFontMetricsF(nf).height(), th = title.isEmpty() ? 0 : QFontMetricsF(tf).height() + 10 * s;
@@ -305,7 +305,7 @@ QImage RenderLower(const GraphicSpec &g)
 	}
 
 	if (g.style == "glass") {
-		const QFont nf = Font(58 * s, QFont::Black), tf = Font(32 * s, QFont::Bold);
+		const QFont nf = Font(58 * s, QFont::Black, g.italic), tf = Font(32 * s, QFont::Bold, g.italic);
 		const double inX = 36 * s, inY = 20 * s, accent = 8 * s;
 		const double contentW = std::max(TextW(nf, name), TextW(tf, title));
 		const double nh = QFontMetricsF(nf).height(), th = title.isEmpty() ? 0 : QFontMetricsF(tf).height();
@@ -331,7 +331,7 @@ QImage RenderLower(const GraphicSpec &g)
 	}
 
 	// 預設：新聞台
-	const QFont nf = Font(60 * s, QFont::Black), tf = Font(32 * s, QFont::Bold);
+	const QFont nf = Font(60 * s, QFont::Black, g.italic), tf = Font(32 * s, QFont::Bold, g.italic);
 	const double accent = 18 * s, slant = 30 * s, nh = 90 * s, th = 54 * s;
 	const double nameW = TextW(nf, name) + 64 * s + slant;
 	const double titleW = TextW(tf, title) + 56 * s + slant;
@@ -368,7 +368,7 @@ QImage RenderClock(const GraphicSpec &g)
 	const QString time = TimeText(g), prefix = U(g.text1), date = g.showDate ? DateText() : QString();
 	const QColor c1 = C(g.color), c2 = C(g.color2), tc = C(g.textColor);
 	const double pad = 20 * s;
-	const QFont timeF = Font(54 * s, QFont::Black), preF = Font(30 * s, QFont::Black), dateF = Font(22 * s, QFont::Bold);
+	const QFont timeF = Font(54 * s, QFont::Black, g.italic), preF = Font(30 * s, QFont::Black, g.italic), dateF = Font(22 * s, QFont::Bold, g.italic);
 	const double tw = MonoWidth(timeF, time), th = QFontMetricsF(timeF).height();
 	const double dh = date.isEmpty() ? 0 : QFontMetricsF(dateF).height();
 	const double dw = TextW(dateF, date);
@@ -489,7 +489,7 @@ QImage RenderLogo(const GraphicSpec &g)
 	if (style == "text") {
 		const QString t = U(g.text1).isEmpty() ? QStringLiteral("MEIKOU LIVE") : U(g.text1);
 		const QString sub = U(g.text2);
-		const QFont f = Font(46 * s, QFont::Black), sf = Font(20 * s, QFont::Bold);
+		const QFont f = Font(46 * s, QFont::Black, g.italic), sf = Font(20 * s, QFont::Bold, g.italic);
 		const double inX = 26 * s, inY = 12 * s;
 		const double th = QFontMetricsF(f).height(), sh = sub.isEmpty() ? 0 : QFontMetricsF(sf).height();
 		const double w = std::max(TextW(f, t), TextW(sf, sub)) + inX * 2, h = th + sh + inY * 2;
@@ -567,7 +567,7 @@ QImage RenderTextGraphic(const GraphicSpec &g)
 	const double s = Scale(g);
 	const QString t = U(g.text1);
 	const QColor c1 = C(g.color), c2 = C(g.color2), tc = C(g.textColor);
-	const QFont f = Font(72 * s, QFont::Black);
+	const QFont f = Font(72 * s, QFont::Black, g.italic);
 	const double tw = TextW(f, t), th = QFontMetricsF(f).height();
 	const double pad = 24 * s;
 
@@ -614,8 +614,8 @@ TickerLayout TickerMetrics(const GraphicSpec &g)
 	TickerLayout L;
 	L.s = Scale(g);
 	L.h = std::max(44.0, 72 * L.s);
-	L.textF = Font(L.h * 0.52, QFont::Black);
-	L.labelF = Font(L.h * 0.50, QFont::Black);
+	L.textF = Font(L.h * 0.52, QFont::Black, g.italic);
+	L.labelF = Font(L.h * 0.50, QFont::Black, g.italic);
 	return L;
 }
 
@@ -665,6 +665,8 @@ void ApplyStyleColors(GraphicSpec &g)
 		{"text", "shadow", 0xFF0ABAB5, 0xFF000000, 0xFFFFFFFF},
 		{"text", "box", 0xFF0ABAB5, 0xFF000000, 0xFFFFFFFF},
 	};
+	if (g.kind == "lower")
+		g.italic = g.style == "sport"; // 斜切運動預設斜體，其他預設正體（之後都能自己改）
 	for (const auto &pr : presets) {
 		if (g.kind == pr.kind && g.style == pr.style) {
 			g.color = pr.c1;

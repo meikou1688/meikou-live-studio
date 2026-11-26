@@ -1562,6 +1562,7 @@ std::string Engine::SaveProjectJson() const
 		obs_data_set_int(d, "speed", ov->speed);
 		obs_data_set_int(d, "opacity", ov->opacity);
 		obs_data_set_int(d, "size", ov->size);
+		obs_data_set_bool(d, "italic", ov->italic);
 		struct vec2 pos, sc;
 		obs_sceneitem_get_pos(ov->pvwItem, &pos);
 		obs_sceneitem_get_scale(ov->pvwItem, &sc);
@@ -1683,6 +1684,8 @@ void Engine::LoadProjectJson(const std::string &json)
 			g.opacity = (int)obs_data_get_int(d, "opacity");
 		if (obs_data_has_user_value(d, "size"))
 			g.size = (int)obs_data_get_int(d, "size");
+		if (obs_data_has_user_value(d, "italic"))
+			g.italic = obs_data_get_bool(d, "italic");
 		Overlay *ov = AddOverlay(g, obs_data_get_string(d, "name"), obs_data_get_string(d, "uid"));
 		// 第 1 版的內建圖卡是 1920×1080 的巢狀場景，舊的縮放比例不能沿用
 		const bool oldLayout = obs_data_get_int(root, "version") < 2 && g.kind != "image";
