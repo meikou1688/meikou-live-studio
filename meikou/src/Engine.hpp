@@ -6,6 +6,7 @@
 #include <graphics/vec2.h>
 #include <util/platform.h>
 
+#include <atomic>
 #include <cstdint>
 #include <functional>
 #include <memory>
@@ -69,6 +70,8 @@ struct Target {
 	std::string status = "未推流";
 	bool active = false;
 	bool reconnecting = false;
+	// 從按下開始到 libobs 通知「已停止」之前都算使用中（連線中 libobs 還不算 active）
+	std::shared_ptr<std::atomic<bool>> running = std::make_shared<std::atomic<bool>>(false);
 	uint64_t lastBytes = 0;
 	uint64_t lastTime = 0;
 	double kbps = 0.0;
@@ -230,6 +233,7 @@ private:
 	obs_encoder_t *videoEncoder_ = nullptr;
 	obs_encoder_t *audioEncoder_ = nullptr;
 	obs_output_t *recordOutput_ = nullptr;
+	std::atomic<bool> recordRunning_{false};
 	std::string recordPath_;
 	uint64_t recordStart_ = 0;
 	uint64_t streamStart_ = 0;

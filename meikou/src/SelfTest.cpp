@@ -266,6 +266,16 @@ int RunSelfTest(QApplication &app, const QString &configDir, const QString &repo
 	const bool framesOk = waitFor([&] { return grab.frames > 10; }, 5000);
 	rep.Check(QStringLiteral("輸出畫面持續產生"), framesOk, QStringLiteral("%1 格").arg(grab.frames));
 
+	// 等畫面變成指定顏色（測試機較慢時輸出會晚幾格）
+	auto waitColor = [&](int x0, int y0, int x1, int y1, int r, int g, int b, int tol) {
+		QColor c;
+		waitFor([&] {
+			c = grab.Average(x0, y0, x1, y1);
+			return Near(c, r, g, b, tol);
+		}, 3000);
+		return c;
+	};
+
 	// ------------------------------------------------ 訊號源
 	rep.Section(QStringLiteral("訊號源"));
 	Input *red = AddColor(engine, "測試紅", 0xFF0000FF);   // ABGR
@@ -359,20 +369,17 @@ int RunSelfTest(QApplication &app, const QString &configDir, const QString &repo
 	engine.Cut();
 	rep.Check(QStringLiteral("CUT 送出：場景上播出"), engine.Program() == scene);
 	rep.Check(QStringLiteral("送出後按鍵變成「撤回」"), engine.WillWithdraw());
-	pump(500);
-	const QColor bg1 = grab.Average(100, 100, 600, 400);
-	const QColor pip1 = grab.Average((int)r3.x0 + 10, (int)r3.y0 + 10, (int)r3.x1 - 10, (int)r3.y1 - 10);
+	const QColor bg1 = waitColor(100, 100, 600, 400, 255, 0, 0, 60);
+	const QColor pip1 = waitColor((int)r3.x0 + 10, (int)r3.y0 + 10, (int)r3.x1 - 10, (int)r3.y1 - 10, 0, 0, 255, 60);
 	rep.Check(QStringLiteral("播出畫面：底圖是紅色"), Near(bg1, 255, 0, 0), Rgb(bg1));
 	rep.Check(QStringLiteral("播出畫面：子母畫面是藍色、位置正確"), Near(pip1, 0, 0, 255), Rgb(pip1));
 	engine.Cut();
 	rep.Check(QStringLiteral("再按一次＝撤回到預覽"), engine.Program() == nullptr && engine.Preview() == scene);
-	pump(500);
-	const QColor black = grab.Average(100, 100, 1800, 1000);
+	const QColor black = waitColor(100, 100, 1800, 1000, 0, 0, 0, 25);
 	rep.Check(QStringLiteral("撤回後播出畫面變黑"), Near(black, 0, 0, 0, 25), Rgb(black));
 	engine.SetTransitionDuration(400);
 	engine.Auto();
-	pump(900);
-	const QColor bg2 = grab.Average(100, 100, 600, 400);
+	const QColor bg2 = waitColor(100, 100, 600, 400, 255, 0, 0, 60);
 	rep.Check(QStringLiteral("AUTO 轉場送出"), engine.Program() == scene && Near(bg2, 255, 0, 0), Rgb(bg2));
 	engine.SetPreview(text);
 	engine.Auto();
@@ -489,6 +496,14 @@ int RunSelfTest(QApplication &app, const QString &configDir, const QString &repo
 	engine.TargetRect({ovClock->uid, 0}, cr);
 	const QColor clockBg = grab.Average((int)cr.x0 + 30, (int)cr.y0 + 30, (int)cr.x1 - 30, (int)cr.y1 - 30);
 	rep.Check(QStringLiteral("時鐘真的出現在播出畫面"), clockBg.isValid() && !Near(clockBg, 255, 0, 0, 40), Rgb(clockBg));
+
+	// 繪圖效能（雲端測試機沒有實體顯示卡，只當參考）
+	{
+		const uint32_t total = obs_get_total_frames(), lagged = obs_get_lagged_frames();
+		const double pct = total ? 100.0 * lagged / total : 0.0;
+		rep.Check(QStringLiteral("繪圖跟得上幀率（掉格率 < 10%）"), pct < 10.0,
+			  QStringLiteral("掉格 %1 / %2（%3%）").arg(lagged).arg(total).arg(pct, 0, 'f', 1), true);
+	}
 
 	// ------------------------------------------------ 錄影
 	rep.Section(QStringLiteral("錄影"));

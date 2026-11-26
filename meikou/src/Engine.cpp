@@ -355,12 +355,8 @@ void Engine::Shutdown()
 
 bool Engine::OutputsActive() const
 {
-	if (recordOutput_ && obs_output_active(recordOutput_))
-		return true;
-	for (const auto &t : targets_)
-		if (t.output && obs_output_active(t.output))
-			return true;
-	return false;
+	// 連線中、重新連線中也算使用中，這時候絕對不能釋放輸出與編碼器
+	return Streaming() || Recording();
 }
 
 void Engine::Tick()
@@ -1296,10 +1292,12 @@ bool Engine::StartStreaming(const EncodeConfig &cfgIn, std::string &error)
 		t.lastBytes = 0;
 		t.lastTime = os_gettime_ns();
 		t.kbps = 0;
+		*t.running = true; // 先標記，start 失敗或停止時再清掉
 		if (obs_output_start(t.output)) {
 			t.status = "連線中…";
 			started++;
 		} else {
+			*t.running = false;
 			const char *le = obs_output_get_last_error(t.output);
 			t.status = std::string("無法開始") + (le && *le ? std::string("：") + le : "");
 		}
@@ -1316,14 +1314,14 @@ bool Engine::StartStreaming(const EncodeConfig &cfgIn, std::string &error)
 void Engine::StopStreaming()
 {
 	for (auto &t : targets_)
-		if (t.output && obs_output_active(t.output))
+		if (t.output && (*t.running || obs_output_active(t.output)))
 			obs_output_stop(t.output);
 }
 
 bool Engine::Streaming() const
 {
 	for (const auto &t : targets_)
-		if (t.output && obs_output_active(t.output))
+		if (t.output && (*t.running || obs_output_active(t.output)))
 			return true;
 	return false;
 }
@@ -1353,7 +1351,9 @@ bool Engine::StartRecording(const EncodeConfig &cfg, const std::string &path, st
 	signal_handler_t *sh = obs_output_get_signal_handler(recordOutput_);
 	signal_handler_connect(sh, "start", OnOutputStart, this);
 	signal_handler_connect(sh, "stop", OnOutputStop, this);
+	recordRunning_ = true;
 	if (!obs_output_start(recordOutput_)) {
+		recordRunning_ = false;
 		const char *le = obs_output_get_last_error(recordOutput_);
 		error = std::string("錄影無法開始") + (le && *le ? std::string("：") + le : "");
 		return false;
@@ -1366,13 +1366,13 @@ bool Engine::StartRecording(const EncodeConfig &cfg, const std::string &path, st
 
 void Engine::StopRecording()
 {
-	if (recordOutput_ && obs_output_active(recordOutput_))
+	if (recordOutput_ && (recordRunning_ || obs_output_active(recordOutput_)))
 		obs_output_stop(recordOutput_);
 }
 
 bool Engine::Recording() const
 {
-	return recordOutput_ && obs_output_active(recordOutput_);
+	return recordOutput_ && (recordRunning_ || obs_output_active(recordOutput_));
 }
 
 Stats Engine::QueryStats()
@@ -1437,12 +1437,14 @@ void Engine::OnOutputStop(void *data, calldata_t *cd)
 	std::string msg = StopMessage(code, le);
 	blog(LOG_INFO, "Output '%s' stopped: code=%d %s", out ? obs_output_get_name(out) : "?", code, le ? le : "");
 	if (out == self->recordOutput_) {
+		self->recordRunning_ = false;
 		if (self->onOutputEvent)
 			self->onOutputEvent(-1, code == OBS_OUTPUT_SUCCESS ? "stopped" : "failed", msg);
 		return;
 	}
 	int idx = self->TargetIndexOf(out);
 	if (idx >= 0) {
+		*self->targets_[idx].running = false;
 		self->targets_[idx].active = false;
 		self->targets_[idx].status = code == OBS_OUTPUT_SUCCESS ? "未推流" : msg;
 	}
