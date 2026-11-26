@@ -1039,8 +1039,8 @@ int RunSelfTest(QApplication &app, const QString &configDir, const QString &repo
 						  after + 200 < before,
 					  QStringLiteral("影片長 %1 ms：送出前停在 %2 ms、送出後 %3 ms").arg(dur).arg(before).arg(after));
 				obs_source_media_stop(src);
-				pump(600);
-				rep.Check(QStringLiteral("停止"), obs_source_media_get_state(src) == OBS_MEDIA_STATE_STOPPED);
+				rep.Check(QStringLiteral("停止"),
+					  waitFor([&] { return obs_source_media_get_state(src) == OBS_MEDIA_STATE_STOPPED; }, 3000));
 				obs_source_media_restart(src);
 				rep.Check(QStringLiteral("重播"),
 					  waitFor([&] { return obs_source_media_get_state(src) == OBS_MEDIA_STATE_PLAYING; }, 5000));
