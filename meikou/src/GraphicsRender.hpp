@@ -36,6 +36,14 @@ struct StyleChoice {
 };
 
 std::vector<StyleChoice> GraphicStyles(const std::string &kind);
+
+// 預設配色組：主色、深色、淺色。套用時依版型決定底色用深色或淺色
+struct Palette {
+	std::string name;
+	uint32_t primary, dark, light;
+};
+std::vector<Palette> GraphicPalettes();
+void ApplyPalette(GraphicSpec &g, const Palette &p);
 // 新增素材時的預設樣式與配色
 void ApplyGraphicDefaults(GraphicSpec &g);
 // 換版型時套用該版型建議的配色

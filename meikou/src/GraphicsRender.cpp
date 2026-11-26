@@ -330,6 +330,121 @@ QImage RenderLower(const GraphicSpec &g)
 		return img;
 	}
 
+	if (g.style == "split") {
+		const QFont nf = Font(52 * s, QFont::Black, g.italic), tf = Font(32 * s, QFont::Bold, g.italic);
+		const double h = 84 * s, slant = 26 * s;
+		const double nw = TextW(nf, name) + 56 * s + slant, tw = title.isEmpty() ? 0 : TextW(tf, title) + 56 * s + slant;
+		QImage img = Canvas(pad * 2 + nw + tw, pad * 2 + h);
+		QPainter p;
+		Begin(p, img, g);
+		QPainterPath all;
+		all.addRect(pad, pad, nw + tw, h);
+		SoftShadow(p, all, 12 * s, 5 * s);
+		if (tw > 0) {
+			p.fillRect(QRectF(pad + nw - slant, pad, tw + slant, h), c2);
+			DrawText(p, tf, pad + nw + 20 * s, pad + (h - QFontMetricsF(tf).height()) / 2, title, A(tc, 0.92));
+		}
+		QLinearGradient lg(pad, pad, pad, pad + h);
+		lg.setColorAt(0, c1.lighter(112));
+		lg.setColorAt(1, c1.darker(112));
+		p.fillPath(Slanted(pad, pad, nw, h, slant), lg);
+		DrawText(p, nf, pad + 26 * s, pad + (h - QFontMetricsF(nf).height()) / 2, name, tc);
+		return img;
+	}
+
+	if (g.style == "bracket") {
+		const QFont nf = Font(58 * s, QFont::Black, g.italic), tf = Font(30 * s, QFont::Bold, g.italic);
+		const double inX = 34 * s, inY = 18 * s, len = 30 * s, th = 6 * s;
+		const double nh = QFontMetricsF(nf).height(), tth = title.isEmpty() ? 0 : QFontMetricsF(tf).height();
+		const double w = std::max(TextW(nf, name), TextW(tf, title)) + inX * 2, h = nh + tth + inY * 2;
+		QImage img = Canvas(pad * 2 + w, pad * 2 + h);
+		QPainter p;
+		Begin(p, img, g);
+		const QRectF r(pad, pad, w, h);
+		p.fillRect(r, A(c2, 0.6));
+		p.setPen(Qt::NoPen);
+		p.setBrush(c1);
+		// 四個角的 L 形框
+		const double L = r.left(), T = r.top(), R = r.right(), B = r.bottom();
+		for (const QRectF &q : {QRectF(L, T, len, th), QRectF(L, T, th, len), QRectF(R - len, T, len, th),
+					QRectF(R - th, T, th, len), QRectF(L, B - th, len, th), QRectF(L, B - len, th, len),
+					QRectF(R - len, B - th, len, th), QRectF(R - th, B - len, th, len)})
+			p.drawRect(q);
+		DrawText(p, nf, L + inX, T + inY, name, tc);
+		DrawText(p, tf, L + inX + 2 * s, T + inY + nh, title, c1.lighter(120));
+		return img;
+	}
+
+	if (g.style == "ribbon") {
+		const QFont nf = Font(56 * s, QFont::Black, g.italic), tf = Font(30 * s, QFont::Bold, g.italic);
+		const double nh = 86 * s, fold = 22 * s, th = 48 * s;
+		const double nw = TextW(nf, name) + 80 * s, tw = title.isEmpty() ? 0 : TextW(tf, title) + 48 * s;
+		const double w = std::max(nw + fold, tw + 40 * s), h = nh + fold + (title.isEmpty() ? 0 : th);
+		QImage img = Canvas(pad * 2 + w + 30 * s, pad * 2 + h);
+		QPainter p;
+		Begin(p, img, g);
+		const double x = pad + fold, y = pad;
+		// 主緞帶（右端燕尾）
+		QPainterPath band;
+		band.moveTo(x, y);
+		band.lineTo(x + nw + 30 * s, y);
+		band.lineTo(x + nw + 6 * s, y + nh / 2);
+		band.lineTo(x + nw + 30 * s, y + nh);
+		band.lineTo(x, y + nh);
+		band.closeSubpath();
+		SoftShadow(p, band, 12 * s, 6 * s);
+		// 左下摺角
+		QPainterPath foldPath;
+		foldPath.moveTo(x, y + nh);
+		foldPath.lineTo(x - fold, y + nh);
+		foldPath.lineTo(x, y + nh + fold);
+		foldPath.closeSubpath();
+		p.fillPath(foldPath, c1.darker(170));
+		QLinearGradient lg(x, y, x, y + nh);
+		lg.setColorAt(0, c1.lighter(115));
+		lg.setColorAt(1, c1.darker(115));
+		p.fillPath(band, lg);
+		p.fillRect(QRectF(x, y + 6 * s, nw, 2 * s), A(Qt::white, 0.3));
+		p.fillRect(QRectF(x, y + nh - 8 * s, nw, 2 * s), A(Qt::white, 0.3));
+		DrawText(p, nf, x + 30 * s, y + (nh - QFontMetricsF(nf).height()) / 2, name, tc);
+		if (tw > 0) {
+			const QRectF tab(x + 20 * s, y + nh + fold - 6 * s, tw, th);
+			p.fillPath(Rounded(tab, 8 * s), c2);
+			DrawText(p, tf, tab.left() + 24 * s, tab.top() + (th - QFontMetricsF(tf).height()) / 2, title, A(tc, 0.92));
+		}
+		return img;
+	}
+
+	if (g.style == "underline") {
+		const QFont nf = Font(66 * s, QFont::Black, g.italic), tf = Font(32 * s, QFont::Bold, g.italic);
+		const double sq = 16 * s;
+		const double nw = TextW(nf, name), tw = TextW(tf, title);
+		const double nh = QFontMetricsF(nf).height(), tth = title.isEmpty() ? 0 : QFontMetricsF(tf).height();
+		const double w = sq + 18 * s + std::max(nw, tw) + 40 * s, h = nh + 12 * s + 4 * s + 8 * s + tth;
+		QImage img = Canvas(pad * 2 + w, pad * 2 + h);
+		QPainter p;
+		Begin(p, img, g);
+		const double x = pad, y = pad;
+		QPainterPath namePath;
+		namePath.setFillRule(Qt::WindingFill);
+		namePath.addText(x + sq + 18 * s, y + QFontMetricsF(nf).ascent(), nf, name);
+		SoftShadow(p, namePath, 6 * s, 3 * s, 0.55);
+		p.fillRect(QRectF(x, y + nh / 2 - sq / 2, sq, sq), c1);
+		p.fillPath(namePath, tc);
+		const double ly = y + nh + 6 * s;
+		QLinearGradient lg(x, ly, x + w, ly);
+		lg.setColorAt(0, c1);
+		lg.setColorAt(0.8, c1);
+		lg.setColorAt(1, A(c1, 0.0));
+		p.fillRect(QRectF(x, ly, w, 4 * s), lg);
+		QPainterPath titlePath;
+		titlePath.setFillRule(Qt::WindingFill);
+		titlePath.addText(x + sq + 18 * s, ly + 10 * s + QFontMetricsF(tf).ascent(), tf, title);
+		SoftShadow(p, titlePath, 4 * s, 2 * s, 0.55);
+		p.fillPath(titlePath, c1.lighter(125));
+		return img;
+	}
+
 	// 預設：新聞台
 	const QFont nf = Font(60 * s, QFont::Black, g.italic), tf = Font(32 * s, QFont::Bold, g.italic);
 	const double accent = 18 * s, slant = 30 * s, nh = 90 * s, th = 54 * s;
@@ -436,6 +551,109 @@ QImage RenderClock(const GraphicSpec &g)
 		DrawMono(p, timeF, pad + inX, y, time, c1.lighter(110));
 		y += th;
 		DrawText(p, dateF, pad + inX, y, date, A(tc, 0.7));
+		return img;
+	}
+
+	if (g.style == "flip") {
+		// 時、分、秒各自一張卡片，中間一條翻頁線
+		const QStringList parts = time.split(u':');
+		QString suffix;
+		QStringList groups;
+		for (const QString &part : parts) {
+			const int space = part.indexOf(u' ');
+			if (space > 0) {
+				groups << part.left(space);
+				suffix = part.mid(space + 1);
+			} else {
+				groups << part;
+			}
+		}
+		const QFont f = Font(56 * s, QFont::Black, g.italic);
+		const double cellW = MonoWidth(f, QStringLiteral("00")) + 22 * s, cellH = QFontMetricsF(f).height() + 10 * s;
+		const double colon = 22 * s, chipW = prefix.isEmpty() ? 0 : TextW(dateF, prefix) + 28 * s;
+		const double sufW = suffix.isEmpty() ? 0 : TextW(dateF, suffix) + 16 * s;
+		const double w = (chipW > 0 ? chipW + 12 * s : 0) + groups.size() * cellW + (groups.size() - 1) * colon + sufW;
+		const double h = cellH + dh + (dh > 0 ? 6 * s : 0);
+		QImage img = Canvas(pad * 2 + w, pad * 2 + h);
+		QPainter p;
+		Begin(p, img, g);
+		double x = pad;
+		if (chipW > 0) {
+			const QRectF chip(x, pad + (cellH - 40 * s) / 2, chipW, 40 * s);
+			p.fillPath(Rounded(chip, 8 * s), c1);
+			DrawText(p, dateF, chip.left() + 14 * s, chip.top() + (40 * s - QFontMetricsF(dateF).height()) / 2, prefix, tc);
+			x += chipW + 12 * s;
+		}
+		for (int i = 0; i < groups.size(); i++) {
+			const QRectF card(x, pad, cellW, cellH);
+			QPainterPath cp = Rounded(card, 10 * s);
+			SoftShadow(p, cp, 8 * s, 4 * s, 0.35);
+			QLinearGradient lg(card.topLeft(), card.bottomLeft());
+			lg.setColorAt(0, c2.lighter(140));
+			lg.setColorAt(0.5, c2.lighter(115));
+			lg.setColorAt(0.5001, c2);
+			lg.setColorAt(1, c2.darker(110));
+			p.fillPath(cp, lg);
+			DrawMono(p, f, x + 11 * s, pad + 5 * s, groups[i], tc);
+			p.fillRect(QRectF(x, pad + cellH / 2 - 1 * s, cellW, 2 * s), A(Qt::black, 0.45));
+			x += cellW;
+			if (i + 1 < groups.size()) {
+				p.setPen(Qt::NoPen);
+				p.setBrush(c1);
+				p.drawEllipse(QPointF(x + colon / 2, pad + cellH * 0.35), 4 * s, 4 * s);
+				p.drawEllipse(QPointF(x + colon / 2, pad + cellH * 0.65), 4 * s, 4 * s);
+				x += colon;
+			}
+		}
+		if (sufW > 0)
+			DrawText(p, dateF, x + 10 * s, pad + cellH - QFontMetricsF(dateF).height() - 4 * s, suffix, tc, 4 * s, c2);
+		DrawText(p, dateF, pad, pad + cellH + 6 * s, date, tc, 4 * s, c2);
+		return img;
+	}
+
+	if (g.style == "pill") {
+		const double h = th + dh + 18 * s, inX = h / 2;
+		const double ph = prefix.isEmpty() ? 0 : TextW(dateF, prefix) + 30 * s;
+		const double w = inX + ph + std::max(tw, dw) + inX;
+		QImage img = Canvas(pad * 2 + w, pad * 2 + h);
+		QPainter p;
+		Begin(p, img, g);
+		const QRectF r(pad, pad, w, h);
+		QPainterPath pill = Rounded(r, h / 2);
+		SoftShadow(p, pill, 12 * s, 5 * s);
+		QLinearGradient lg(r.topLeft(), r.topRight());
+		lg.setColorAt(0, c1.lighter(110));
+		lg.setColorAt(1, c1.darker(130));
+		p.fillPath(pill, lg);
+		p.setPen(QPen(A(Qt::white, 0.35), 2 * s));
+		p.drawRoundedRect(r.adjusted(2 * s, 2 * s, -2 * s, -2 * s), h / 2 - 2 * s, h / 2 - 2 * s);
+		double x = pad + inX * 0.8;
+		if (ph > 0) {
+			p.setPen(Qt::NoPen);
+			p.setBrush(tc);
+			p.drawEllipse(QPointF(x + 6 * s, pad + h / 2), 6 * s, 6 * s);
+			DrawText(p, dateF, x + 18 * s, pad + (h - QFontMetricsF(dateF).height()) / 2, prefix, tc);
+			x += ph + 6 * s;
+		}
+		const double ty = pad + (h - th - dh) / 2;
+		DrawMono(p, timeF, x, ty, time, tc);
+		DrawText(p, dateF, x + 2 * s, ty + th, date, A(tc, 0.85));
+		return img;
+	}
+
+	if (g.style == "minimal") {
+		const double bar = 8 * s;
+		const double ph = prefix.isEmpty() ? 0 : QFontMetricsF(dateF).height();
+		const double w = bar + 18 * s + std::max({tw, dw, TextW(dateF, prefix)}) + 10 * s, h = ph + th + dh;
+		QImage img = Canvas(pad * 2 + w, pad * 2 + h);
+		QPainter p;
+		Begin(p, img, g);
+		p.fillRect(QRectF(pad, pad, bar, h), c1);
+		const double x = pad + bar + 18 * s;
+		SoftShadow(p, Rounded(QRectF(x, pad, w - bar - 18 * s, h), 6 * s), 10 * s, 2 * s, 0.25);
+		DrawText(p, dateF, x, pad, prefix, c1.lighter(120));
+		DrawMono(p, timeF, x, pad + ph, time, tc);
+		DrawText(p, dateF, x, pad + ph + th, date, A(tc, 0.85));
 		return img;
 	}
 
@@ -551,6 +769,37 @@ QImage RenderLogo(const GraphicSpec &g)
 		return img;
 	}
 
+	if (style == "rounded" || style == "frame") {
+		const QImage fit = FitImage(src, 380 * s, 220 * s);
+		const double border = (style == "frame" ? 8 : 4) * s, inP = style == "frame" ? 12 * s : 0;
+		const double w = fit.width() + (inP + border) * 2, h = fit.height() + (inP + border) * 2;
+		QImage img = Canvas(pad * 2 + w, pad * 2 + h);
+		QPainter p;
+		Begin(p, img, g);
+		const QRectF r(pad, pad, w, h);
+		const double radius = style == "rounded" ? 26 * s : 4 * s;
+		QPainterPath box = Rounded(r, radius);
+		SoftShadow(p, box, 10 * s, 4 * s, 0.3);
+		p.fillPath(box, style == "frame" ? c2 : c1);
+		QPainterPath inner = Rounded(r.adjusted(border + inP, border + inP, -border - inP, -border - inP),
+					     std::max(0.0, radius - border - inP));
+		p.save();
+		p.setClipPath(inner);
+		p.drawImage(QPointF(r.left() + border + inP, r.top() + border + inP), fit);
+		p.restore();
+		if (style == "frame") {
+			p.strokePath(Rounded(r.adjusted(border / 2, border / 2, -border / 2, -border / 2), radius), QPen(c1, border));
+			// 右上角小 LIVE 標
+			const QFont lf = Font(16 * s, QFont::Black, g.italic);
+			const double lw = TextW(lf, QStringLiteral("LIVE")) + 16 * s, lh = 24 * s;
+			const QRectF tag(r.right() - lw - 6 * s, r.top() - lh / 2, lw, lh);
+			p.fillPath(Rounded(tag, 5 * s), QColor(229, 57, 53));
+			DrawText(p, lf, tag.left() + 8 * s, tag.top() + (lh - QFontMetricsF(lf).height()) / 2, QStringLiteral("LIVE"),
+				 Qt::white);
+		}
+		return img;
+	}
+
 	// 原圖／浮水印
 	const QImage fit = FitImage(src, 420 * s, 220 * s);
 	QImage img = Canvas(fit.width(), fit.height());
@@ -594,6 +843,52 @@ QImage RenderTextGraphic(const GraphicSpec &g)
 		p.fillPath(path, tc);
 		return img;
 	}
+	if (g.style == "neon") {
+		const double glow = 18 * s;
+		QImage img = Canvas(pad * 2 + tw + glow * 2, pad * 2 + th + glow * 2);
+		QPainter p;
+		Begin(p, img, g);
+		QPainterPath path;
+		path.setFillRule(Qt::WindingFill);
+		path.addText(pad + glow, pad + glow + QFontMetricsF(f).ascent(), f, t);
+		for (int i = 6; i >= 1; i--)
+			p.strokePath(path, QPen(A(c1, 0.10), i * 5 * s, Qt::SolidLine, Qt::RoundCap, Qt::RoundJoin));
+		p.strokePath(path, QPen(c1, 3 * s, Qt::SolidLine, Qt::RoundCap, Qt::RoundJoin));
+		p.fillPath(path, tc);
+		return img;
+	}
+	if (g.style == "gradient") {
+		const double sw = 6 * s;
+		QImage img = Canvas(pad * 2 + tw + sw * 2, pad * 2 + th + sw * 2);
+		QPainter p;
+		Begin(p, img, g);
+		QPainterPath path;
+		path.setFillRule(Qt::WindingFill);
+		path.addText(pad + sw, pad + sw + QFontMetricsF(f).ascent(), f, t);
+		SoftShadow(p, path, 6 * s, 4 * s, 0.45);
+		p.strokePath(path, QPen(c2, sw * 2, Qt::SolidLine, Qt::RoundCap, Qt::RoundJoin));
+		QLinearGradient lg(0, pad, 0, pad + th);
+		lg.setColorAt(0, tc);
+		lg.setColorAt(0.55, c1.lighter(130));
+		lg.setColorAt(1, c1);
+		p.fillPath(path, lg);
+		return img;
+	}
+	if (g.style == "ribbon") {
+		const double slant = th * 0.35, inX = 34 * s;
+		QImage img = Canvas(pad * 2 + tw + inX * 2 + slant, pad * 2 + th + 16 * s);
+		QPainter p;
+		Begin(p, img, g);
+		QPainterPath band = Slanted(pad, pad, tw + inX * 2 + slant, th + 16 * s, slant, slant);
+		SoftShadow(p, band, 10 * s, 5 * s);
+		QLinearGradient lg(pad, pad, pad, pad + th);
+		lg.setColorAt(0, c1.lighter(112));
+		lg.setColorAt(1, c1.darker(118));
+		p.fillPath(band, lg);
+		DrawText(p, f, pad + inX + slant * 0.5, pad + 8 * s, t, tc);
+		return img;
+	}
+
 	const double sw = 10 * s;
 	QImage img = Canvas(pad * 2 + tw + sw * 2, pad * 2 + th + sw * 2);
 	QPainter p;
@@ -626,18 +921,46 @@ TickerLayout TickerMetrics(const GraphicSpec &g)
 std::vector<StyleChoice> GraphicStyles(const std::string &kind)
 {
 	if (kind == "lower")
-		return {{"news", "新聞台"},  {"clean", "簡約白卡"},   {"sport", "斜切運動"},
-			{"pill", "圓角膠囊"}, {"outline", "透明描邊"}, {"glass", "玻璃漸層"}};
+		return {{"news", "新聞台"},     {"clean", "簡約白卡"},   {"sport", "斜切運動"}, {"pill", "圓角膠囊"},
+			{"outline", "透明描邊"}, {"glass", "玻璃漸層"},   {"split", "雙色分割"}, {"bracket", "角框"},
+			{"ribbon", "緞帶"},      {"underline", "細線極簡"}};
 	if (kind == "clock")
-		return {{"dark", "深色圓角"}, {"live", "LIVE 紅標"}, {"outline", "透明描邊"}, {"neon", "霓虹"}};
+		return {{"dark", "深色圓角"}, {"live", "LIVE 紅標"}, {"outline", "透明描邊"}, {"neon", "霓虹"},
+			{"flip", "翻頁卡"},   {"pill", "膠囊"},       {"minimal", "極簡直線"}};
 	if (kind == "ticker")
-		return {{"news", "新聞快訊"}, {"light", "白底"}, {"gradient", "漸層"}};
+		return {{"news", "新聞快訊"}, {"light", "白底"},     {"gradient", "漸層"},
+			{"glass", "半透明"},   {"sport", "斜切運動"}, {"minimal", "無底描邊"}};
 	if (kind == "logo")
-		return {{"plain", "原圖"},          {"circle", "圓形徽章"}, {"card", "圓角卡片"},
-			{"watermark", "半透明浮水印"}, {"text", "文字台標"}};
+		return {{"plain", "原圖"},          {"circle", "圓形徽章"},  {"card", "圓角卡片"},     {"rounded", "圓角裁切"},
+			{"frame", "框線＋LIVE"},    {"watermark", "半透明浮水印"}, {"text", "文字台標"}};
 	if (kind == "text")
-		return {{"stroke", "描邊"}, {"shadow", "陰影"}, {"box", "底框"}};
+		return {{"stroke", "描邊"}, {"shadow", "陰影"}, {"box", "底框"},
+			{"neon", "霓虹"},   {"gradient", "漸層字"}, {"ribbon", "斜切底"}};
 	return {};
+}
+
+std::vector<Palette> GraphicPalettes()
+{
+	return {
+		{"新聞紅", 0xFFD7263D, 0xFF101826, 0xFFFFFFFF}, {"蒂芬尼藍", 0xFF0ABAB5, 0xFF062B2A, 0xFFFFFFFF},
+		{"科技青", 0xFF06B6D4, 0xFF04161C, 0xFFFFFFFF}, {"皇家藍", 0xFF2563EB, 0xFF0B1735, 0xFFFFFFFF},
+		{"海軍藍", 0xFF1E3A8A, 0xFF0A0F1F, 0xFFF8FAFC}, {"森林綠", 0xFF16A34A, 0xFF0B1F13, 0xFFFFFFFF},
+		{"活力橘", 0xFFF97316, 0xFF1C1208, 0xFFFFFFFF}, {"尊爵金", 0xFFC9971A, 0xFF14110A, 0xFFFFF8E1},
+		{"紫羅蘭", 0xFF7C3AED, 0xFF140B26, 0xFFFFFFFF}, {"櫻花粉", 0xFFEC4899, 0xFF2A0B1C, 0xFFFFFFFF},
+		{"酒紅", 0xFF9F1239, 0xFF1A0710, 0xFFFFF1F2},   {"經典黑", 0xFF2B2B2B, 0xFF000000, 0xFFFFFFFF},
+	};
+}
+
+void ApplyPalette(GraphicSpec &g, const Palette &pal)
+{
+	// 淺色底的版型：底色用淺色、文字用深色；其他版型相反
+	const bool lightBase = (g.kind == "lower" && g.style == "clean") || (g.kind == "ticker" && g.style == "light") ||
+			       (g.kind == "logo" && (g.style == "card" || g.style == "circle" || g.style == "frame"));
+	g.color = pal.primary;
+	g.color2 = lightBase ? pal.light : pal.dark;
+	g.textColor = lightBase ? pal.dark : pal.light;
+	if (g.kind == "ticker" && !lightBase)
+		g.color2 = (pal.dark & 0x00FFFFFF) | 0xF0000000; // 跑馬燈底條略透明
 }
 
 void ApplyStyleColors(GraphicSpec &g)
@@ -664,6 +987,19 @@ void ApplyStyleColors(GraphicSpec &g)
 		{"text", "stroke", 0xFF0ABAB5, 0xFF000000, 0xFFFFFFFF},
 		{"text", "shadow", 0xFF0ABAB5, 0xFF000000, 0xFFFFFFFF},
 		{"text", "box", 0xFF0ABAB5, 0xFF000000, 0xFFFFFFFF},
+		{"lower", "split", 0xFF2563EB, 0xFF0B1735, 0xFFFFFFFF},
+		{"lower", "bracket", 0xFF0ABAB5, 0xFF000000, 0xFFFFFFFF},
+		{"lower", "ribbon", 0xFFD7263D, 0xFF101826, 0xFFFFFFFF},
+		{"lower", "underline", 0xFF0ABAB5, 0xFF000000, 0xFFFFFFFF},
+		{"clock", "flip", 0xFFF97316, 0xFF1F2937, 0xFFFFFFFF},
+		{"clock", "pill", 0xFF0ABAB5, 0xFF062B2A, 0xFFFFFFFF},
+		{"clock", "minimal", 0xFF0ABAB5, 0xFF000000, 0xFFFFFFFF},
+		{"ticker", "glass", 0xFF0ABAB5, 0xFF000000, 0xFFFFFFFF},
+		{"ticker", "sport", 0xFFF97316, 0xFF111827, 0xFFFFFFFF},
+		{"ticker", "minimal", 0xFFD7263D, 0xFF000000, 0xFFFFFFFF},
+		{"text", "neon", 0xFFEC4899, 0xFF000000, 0xFFFFFFFF},
+		{"text", "gradient", 0xFFF59E0B, 0xFF1F1300, 0xFFFFFFFF},
+		{"text", "ribbon", 0xFFD7263D, 0xFF000000, 0xFFFFFFFF},
 	};
 	if (g.kind == "lower")
 		g.italic = g.style == "sport"; // 斜切運動預設斜體，其他預設正體（之後都能自己改）
@@ -764,6 +1100,38 @@ TickerParts RenderTicker(const GraphicSpec &g)
 				 label, c1.darker(120));
 			textX = chip.right() + 24 * s;
 		}
+	} else if (g.style == "glass") {
+		p.fillRect(QRectF(0, 0, W, h), A(c2, 0.62));
+		p.fillRect(QRectF(0, 0, W, 2 * s), A(Qt::white, 0.22));
+		if (!label.isEmpty()) {
+			const double lw = TextW(L.labelF, label) + 44 * s;
+			const QRectF chip(14 * s, h * 0.15, lw, h * 0.70);
+			p.fillPath(Rounded(chip, chip.height() / 2), c1);
+			DrawText(p, L.labelF, chip.left() + 22 * s, chip.top() + (chip.height() - QFontMetricsF(L.labelF).height()) / 2,
+				 label, Qt::white);
+			textX = chip.right() + 24 * s;
+		}
+	} else if (g.style == "sport") {
+		p.fillRect(QRectF(0, 0, W, h), c2);
+		p.fillRect(QRectF(0, h - 4 * s, W, 4 * s), c1);
+		if (!label.isEmpty()) {
+			const double slant = h * 0.45;
+			const double lw = TextW(L.labelF, label) + 60 * s + slant;
+			p.fillPath(Slanted(0, 0, lw + 18 * s, h, slant), tc);
+			p.fillPath(Slanted(0, 0, lw, h, slant), c1);
+			DrawText(p, L.labelF, 24 * s, (h - QFontMetricsF(L.labelF).height()) / 2, label, Qt::white);
+			textX = lw + 36 * s;
+		}
+	} else if (g.style == "minimal") {
+		// 沒有底條：文字加描邊直接壓在畫面上
+		if (!label.isEmpty()) {
+			const double lw = TextW(L.labelF, label) + 40 * s;
+			const QRectF chip(10 * s, h * 0.14, lw, h * 0.72);
+			p.fillPath(Rounded(chip, 8 * s), c1);
+			DrawText(p, L.labelF, chip.left() + 20 * s, chip.top() + (chip.height() - QFontMetricsF(L.labelF).height()) / 2,
+				 label, Qt::white);
+			textX = chip.right() + 24 * s;
+		}
 	} else { // news
 		p.fillRect(QRectF(0, 0, W, h), c2);
 		p.fillRect(QRectF(0, 0, W, 3 * s), c1);
@@ -789,7 +1157,10 @@ TickerParts RenderTicker(const GraphicSpec &g)
 	QPainter q;
 	Begin(q, out.text, g);
 	const QColor textColor = tc;
-	DrawText(q, L.textF, 0, (h - QFontMetricsF(L.textF).height()) / 2, text, textColor);
+	if (g.style == "minimal")
+		DrawText(q, L.textF, 4 * s, (h - QFontMetricsF(L.textF).height()) / 2, text, textColor, 7 * s, c2);
+	else
+		DrawText(q, L.textF, 0, (h - QFontMetricsF(L.textF).height()) / 2, text, textColor);
 	q.setPen(Qt::NoPen);
 	q.setBrush(g.style == "gradient" ? A(Qt::white, 0.8) : c1);
 	q.drawEllipse(QPointF(tw + gap / 2, h / 2), 6 * s, 6 * s);

@@ -6,6 +6,7 @@
 #include <QDialogButtonBox>
 #include <QFileDialog>
 #include <QFormLayout>
+#include <QGridLayout>
 #include <QGroupBox>
 #include <QHBoxLayout>
 #include <QLabel>
@@ -54,7 +55,7 @@ OverlayDialog::OverlayDialog(const GraphicSpec &spec, const QString &name, QWidg
 	  spec_(spec)
 {
 	setWindowTitle(QStringLiteral("設計%1").arg(KindTitle(spec_.kind)));
-	setMinimumWidth(980);
+	setMinimumWidth(1160);
 
 	auto *root = new QHBoxLayout(this);
 	auto *left = new QVBoxLayout;
@@ -157,7 +158,34 @@ OverlayDialog::OverlayDialog(const GraphicSpec &spec, const QString &name, QWidg
 		colors->addWidget(c1_);
 		colors->addWidget(c2_);
 		colors->addWidget(tc_);
+		// 預設配色：點一下套用，之後仍可用上面三個按鈕自己調
+		auto *palWidget = new QWidget;
+		auto *palGrid = new QGridLayout(palWidget);
+		palGrid->setContentsMargins(0, 0, 0, 0);
+		palGrid->setSpacing(4);
+		const auto palettes = GraphicPalettes();
+		for (int i = 0; i < (int)palettes.size(); i++) {
+			const Palette pal = palettes[i];
+			auto *b = new QPushButton(Q(pal.name));
+			b->setFixedSize(68, 30);
+			b->setCursor(Qt::PointingHandCursor);
+			b->setToolTip(QStringLiteral("套用「%1」配色").arg(Q(pal.name)));
+			const QColor pc = QColor::fromRgba(pal.primary), dc = QColor::fromRgba(pal.dark);
+			b->setStyleSheet(QStringLiteral("QPushButton{color:white; font-size:11px; font-weight:bold; border:1px solid #444;"
+							"border-radius:5px; background:qlineargradient(x1:0,y1:0,x2:1,y2:0,"
+							"stop:0 %1, stop:0.62 %1, stop:0.63 %2, stop:1 %2);}"
+							"QPushButton:hover{border:2px solid #81D8D0;}")
+						 .arg(pc.name(), dc.name()));
+			connect(b, &QPushButton::clicked, this, [this, pal] {
+				Collect();
+				ApplyPalette(spec_, pal);
+				UpdateColorButtons();
+				UpdatePreview();
+			});
+			palGrid->addWidget(b, i / 6, i % 6);
+		}
 		form->addRow(QStringLiteral("主色／輔色／文字"), colors);
+		form->addRow(QStringLiteral("快速配色"), palWidget);
 		UpdateColorButtons();
 
 		size_ = new QSpinBox;
@@ -202,7 +230,7 @@ OverlayDialog::OverlayDialog(const GraphicSpec &spec, const QString &name, QWidg
 	auto *pg = new QGroupBox(QStringLiteral("預覽"));
 	auto *pl = new QVBoxLayout(pg);
 	preview_ = new QLabel;
-	preview_->setFixedSize(600, 340);
+	preview_->setFixedSize(560, 315);
 	preview_->setAlignment(Qt::AlignCenter);
 	pl->addWidget(preview_);
 	root->addWidget(pg, 1);
@@ -296,7 +324,7 @@ void OverlayDialog::UpdatePreview()
 	} else {
 		art = RenderPreviewImage(spec_);
 	}
-	const QSize box(600, 340); // 固定大小，避免預覽圖把視窗越撐越大
+	const QSize box(560, 315); // 固定大小，避免預覽圖把視窗越撐越大
 	QImage bg(box, QImage::Format_ARGB32_Premultiplied);
 	QPainter p(&bg);
 	QLinearGradient lg(0, 0, box.width(), box.height());
