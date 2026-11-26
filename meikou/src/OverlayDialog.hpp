@@ -37,6 +37,7 @@ private:
 	QComboBox *style_ = nullptr;
 	QComboBox *slant_ = nullptr;
 	QComboBox *orient_ = nullptr;
+	QComboBox *textPos_ = nullptr;
 	QPushButton *c1_ = nullptr, *c2_ = nullptr, *tc_ = nullptr;
 	QSpinBox *size_ = nullptr, *opacity_ = nullptr;
 	QSlider *speed_ = nullptr;

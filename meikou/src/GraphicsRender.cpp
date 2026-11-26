@@ -123,8 +123,8 @@ void DrawMono(QPainter &p, const QFont &f, double x, double top, const QString &
 	p.fillPath(path, fill);
 }
 
-// 柔和陰影：用幾層放大的半透明圖形疊出來
-void SoftShadow(QPainter &p, const QPainterPath &shape, double spread, double dy, double strength = 0.35)
+// 柔和陰影：只給「陰影」文字版型用（其他疊加一律不加底部陰影）
+void DropShadow(QPainter &p, const QPainterPath &shape, double spread, double dy, double strength = 0.35)
 {
 	p.save();
 	p.setPen(Qt::NoPen);
@@ -280,7 +280,6 @@ QImage RenderLowerVertical(const GraphicSpec &g)
 		Begin(p, img, g);
 		const QRectF r(pad, pad, w, h);
 		QPainterPath card = Rounded(r, 16 * s);
-		SoftShadow(p, card, 14 * s, 6 * s, 0.3);
 		p.fillPath(card, c2);
 		p.save();
 		p.setClipPath(card);
@@ -303,7 +302,6 @@ QImage RenderLowerVertical(const GraphicSpec &g)
 		Begin(p, img, g);
 		const QRectF nr(pad, pad, nColW, nh);
 		QPainterPath pill = Rounded(nr, nColW / 2);
-		SoftShadow(p, pill, 12 * s, 5 * s);
 		QLinearGradient lg(nr.topLeft(), nr.bottomLeft());
 		lg.setColorAt(0, c1.lighter(112));
 		lg.setColorAt(1, c1.darker(135));
@@ -405,7 +403,6 @@ QImage RenderLowerVertical(const GraphicSpec &g)
 	if (tW > 0)
 		all = all.united(column(x + nColW, pad + offY, tColW, th, cut));
 	all.addRect(x, pad, nColW, accent);
-	SoftShadow(p, all, 14 * s, 6 * s);
 	if (tW > 0) {
 		p.fillPath(column(x + nColW, pad + offY, tColW, th, cut), st == "split" ? c2.lighter(115) : c2);
 		DrawVText(p, tf, x + nColW + tColW / 2, pad + offY + 20 * s, title, A(tc, 0.92));
@@ -442,7 +439,6 @@ QImage RenderLower(const GraphicSpec &g)
 		QPainter p;
 		Begin(p, img, g);
 		const QRectF card(pad, pad, w, h);
-		SoftShadow(p, Rounded(card, 16 * s), 14 * s, 6 * s, 0.30);
 		p.fillPath(Rounded(card, 16 * s), c2);
 		QPainterPath accent = Rounded(QRectF(pad, pad, bar + 16 * s, h), 16 * s)
 					      .intersected(Rounded(card, 16 * s))
@@ -468,7 +464,6 @@ QImage RenderLower(const GraphicSpec &g)
 		Begin(p, img, g);
 		const double x = pad + 26 * s, y = pad;
 		QPainterPath nameBar = Slanted(x, y, nw, nh, slant, slant);
-		SoftShadow(p, nameBar, 12 * s, 6 * s);
 		// 左側兩條速度線
 		p.fillPath(Slanted(pad, y, 10 * s + slant, nh, slant, slant), A(tc, 0.9));
 		p.fillPath(Slanted(pad + 14 * s, y, 6 * s + slant, nh, slant, slant), A(c1, 0.7));
@@ -496,7 +491,6 @@ QImage RenderLower(const GraphicSpec &g)
 		Begin(p, img, g);
 		const QRectF r(pad, pad, w, h);
 		QPainterPath pill = Rounded(r, h / 2);
-		SoftShadow(p, pill, 14 * s, 6 * s);
 		QLinearGradient lg(r.topLeft(), r.topRight());
 		lg.setColorAt(0, c1.lighter(112));
 		lg.setColorAt(1, c1.darker(135));
@@ -578,7 +572,6 @@ QImage RenderLower(const GraphicSpec &g)
 		Begin(p, img, g);
 		QPainterPath all;
 		all.addRect(pad, pad, nw + tw, h);
-		SoftShadow(p, all, 12 * s, 5 * s);
 		if (tw > 0) {
 			p.fillRect(QRectF(pad + nw - slant, pad, tw + slant, h), c2);
 			DrawText(p, tf, pad + nw + 20 * s, pad + (h - QFontMetricsF(tf).height()) / 2, title, A(tc, 0.92));
@@ -631,7 +624,6 @@ QImage RenderLower(const GraphicSpec &g)
 		band.lineTo(x + nw + 30 * s, y + nh);
 		band.lineTo(x, y + nh);
 		band.closeSubpath();
-		SoftShadow(p, band, 12 * s, 6 * s);
 		// 左下摺角
 		QPainterPath foldPath;
 		foldPath.moveTo(x, y + nh);
@@ -667,7 +659,6 @@ QImage RenderLower(const GraphicSpec &g)
 		QPainterPath namePath;
 		namePath.setFillRule(Qt::WindingFill);
 		namePath.addText(x + sq + 18 * s, y + QFontMetricsF(nf).ascent(), nf, name);
-		SoftShadow(p, namePath, 6 * s, 3 * s, 0.55);
 		p.fillRect(QRectF(x, y + nh / 2 - sq / 2, sq, sq), c1);
 		p.fillPath(namePath, tc);
 		const double ly = y + nh + 6 * s;
@@ -679,7 +670,6 @@ QImage RenderLower(const GraphicSpec &g)
 		QPainterPath titlePath;
 		titlePath.setFillRule(Qt::WindingFill);
 		titlePath.addText(x + sq + 18 * s, ly + 10 * s + QFontMetricsF(tf).ascent(), tf, title);
-		SoftShadow(p, titlePath, 4 * s, 2 * s, 0.55);
 		p.fillPath(titlePath, c1.lighter(125));
 		return img;
 	}
@@ -700,7 +690,6 @@ QImage RenderLower(const GraphicSpec &g)
 	if (!title.isEmpty())
 		all = all.united(Slanted(x, y + nh, titleW, th, slant));
 	all.addRect(pad, y, accent, h);
-	SoftShadow(p, all, 14 * s, 6 * s);
 	QLinearGradient lg(x, y, x, y + nh);
 	lg.setColorAt(0, c1.lighter(115));
 	lg.setColorAt(1, c1.darker(110));
@@ -737,7 +726,6 @@ QImage RenderClock(const GraphicSpec &g)
 		Begin(p, img, g);
 		QPainterPath all;
 		all.addRect(pad, pad, tagW + timeW, h);
-		SoftShadow(p, all, 10 * s, 5 * s);
 		p.fillRect(QRectF(pad, pad, tagW, h), c1);
 		p.fillRect(QRectF(pad + tagW, pad, timeW, h), c2);
 		// 閃爍感的小圓點
@@ -826,7 +814,6 @@ QImage RenderClock(const GraphicSpec &g)
 		for (int i = 0; i < groups.size(); i++) {
 			const QRectF card(x, pad, cellW, cellH);
 			QPainterPath cp = Rounded(card, 10 * s);
-			SoftShadow(p, cp, 8 * s, 4 * s, 0.35);
 			QLinearGradient lg(card.topLeft(), card.bottomLeft());
 			lg.setColorAt(0, c2.lighter(140));
 			lg.setColorAt(0.5, c2.lighter(115));
@@ -859,7 +846,6 @@ QImage RenderClock(const GraphicSpec &g)
 		Begin(p, img, g);
 		const QRectF r(pad, pad, w, h);
 		QPainterPath pill = Rounded(r, h / 2);
-		SoftShadow(p, pill, 12 * s, 5 * s);
 		QLinearGradient lg(r.topLeft(), r.topRight());
 		lg.setColorAt(0, c1.lighter(110));
 		lg.setColorAt(1, c1.darker(130));
@@ -889,7 +875,6 @@ QImage RenderClock(const GraphicSpec &g)
 		Begin(p, img, g);
 		p.fillRect(QRectF(pad, pad, bar, h), c1);
 		const double x = pad + bar + 18 * s;
-		SoftShadow(p, Rounded(QRectF(x, pad, w - bar - 18 * s, h), 6 * s), 10 * s, 2 * s, 0.25);
 		DrawText(p, dateF, x, pad, prefix, c1.lighter(120));
 		DrawMono(p, timeF, x, pad + ph, time, tc);
 		DrawText(p, dateF, x, pad + ph + th, date, A(tc, 0.85));
@@ -907,7 +892,6 @@ QImage RenderClock(const GraphicSpec &g)
 	Begin(p, img, g);
 	const QRectF r(pad, pad, w, h);
 	QPainterPath box = Rounded(r, 16 * s);
-	SoftShadow(p, box, 12 * s, 5 * s);
 	p.fillPath(box, A(c2, 0.9));
 	p.strokePath(box, QPen(A(Qt::white, 0.10), 1.5 * s));
 	double x = pad + inX;
@@ -942,37 +926,92 @@ QColor Readable(const QColor &text, const QColor &bg)
 	return lum(bg) > 0.5 ? QColor(16, 24, 38) : QColor(Qt::white);
 }
 
-// 圖片台標旁邊加上台標文字／副標（有填才加）
+// 台標文字的位置：right 右邊、left 左邊、top 上方、bottom 下方
+std::string LogoTextPos(const GraphicSpec &g)
+{
+	const std::string &t = g.textPos;
+	return (t == "left" || t == "top" || t == "bottom") ? t : std::string("right");
+}
+
+// 依位置排好「圖片框」與「文字框」，回傳兩者的左上角（以內容區域為原點）與內容大小
+void LayoutLogo(const std::string &pos, double bw, double bh, double pw, double ph, double gap, QPointF &img, QPointF &txt,
+		QSizeF &size)
+{
+	if (pos == "left") {
+		txt = QPointF(0, (std::max(bh, ph) - ph) / 2);
+		img = QPointF(pw + gap, (std::max(bh, ph) - bh) / 2);
+		size = QSizeF(pw + gap + bw, std::max(bh, ph));
+	} else if (pos == "top" || pos == "bottom") {
+		const double w = std::max(bw, pw);
+		const bool top = pos == "top";
+		txt = QPointF((w - pw) / 2, top ? 0 : bh + gap);
+		img = QPointF((w - bw) / 2, top ? ph + gap : 0);
+		size = QSizeF(w, bh + gap + ph);
+	} else {
+		img = QPointF(0, (std::max(bh, ph) - bh) / 2);
+		txt = QPointF(bw + gap, (std::max(bh, ph) - ph) / 2);
+		size = QSizeF(bw + gap + pw, std::max(bh, ph));
+	}
+}
+
+// 兩行文字依位置對齊：放右邊靠左、放左邊靠右、上下置中
+void DrawLogoLines(QPainter &p, const std::string &pos, const QRectF &box, const QFont &f, const QFont &sf,
+		   const QString &t, const QString &sub, const QColor &c, double s)
+{
+	const double th = t.isEmpty() ? 0 : QFontMetricsF(f).height();
+	auto xFor = [&](double w) {
+		if (pos == "left")
+			return box.right() - w;
+		if (pos == "top" || pos == "bottom")
+			return box.left() + (box.width() - w) / 2;
+		return box.left();
+	};
+	DrawText(p, f, xFor(TextW(f, t)), box.top(), t, c);
+	DrawText(p, sf, xFor(TextW(sf, sub)) + (pos == "right" ? 2 * s : 0), box.top() + th, sub, A(c, 0.85));
+}
+
+// 圖片台標加上台標文字／副標（有填才加），位置可選
 QImage AppendLogoText(const QImage &base, double pad, const GraphicSpec &g, const std::string &style)
 {
 	const QString t = U(g.text1), sub = U(g.text2);
 	if (t.isEmpty() && sub.isEmpty())
 		return base;
 	const double s = Scale(g);
+	const std::string pos = LogoTextPos(g);
 	const QColor c1 = C(g.color), c2 = C(g.color2), tc = C(g.textColor);
 	const QFont f = Font(40 * s, QFont::Black, g.italic), sf = Font(18 * s, QFont::Bold, g.italic);
 	const double th = t.isEmpty() ? 0 : QFontMetricsF(f).height(), sh = sub.isEmpty() ? 0 : QFontMetricsF(sf).height();
 	const bool bare = style == "plain" || style == "watermark";
 	const double inX = bare ? 0 : 22 * s, inY = bare ? 0 : 10 * s, accent = bare ? 0 : 6 * s;
-	const double pw = std::max(TextW(f, t), TextW(sf, sub)) + inX * 2 + accent, ph = th + sh + inY * 2;
-	const double margin = bare ? 8 * s : pad; // 外圍留給陰影、描邊
-	const double gap = 12 * s;
-	const double x0 = base.width() - (bare ? 0 : pad) + gap;
-	const double W = x0 + pw + margin, H = std::max<double>(base.height(), ph + margin * 2);
-	QImage img = Canvas(W, H);
+	const double textW = std::max(TextW(f, t), TextW(sf, sub));
+	const double pw = textW + inX * 2 + accent, ph = th + sh + inY * 2;
+	const double edge = bare ? 0 : pad; // 圖片四周原本留的空白
+	const double margin = bare ? 8 * s : pad;
+	const double bw = base.width() - edge * 2, bh = base.height() - edge * 2;
+	QPointF ip, tp;
+	QSizeF content;
+	LayoutLogo(pos, bw, bh, pw, ph, 12 * s, ip, tp, content);
+	QImage img = Canvas(content.width() + margin * 2, content.height() + margin * 2);
 	QPainter p;
 	Begin(p, img, g);
 	p.setOpacity(1.0); // 圖片本身已經套過不透明度
-	p.drawImage(QPointF(0, (H - base.height()) / 2), base);
+	p.drawImage(QPointF(margin + ip.x() - edge, margin + ip.y() - edge), base);
 	p.setOpacity(std::clamp(g.opacity, 5, 100) / 100.0);
-	const QRectF r(x0, (H - ph) / 2, pw, ph);
+	const QRectF r(margin + tp.x(), margin + tp.y(), pw, ph);
 	if (bare) {
-		DrawText(p, f, r.left(), r.top(), t, tc, 6 * s, A(Qt::black, 0.6));
-		DrawText(p, sf, r.left() + 2 * s, r.top() + th, sub, A(tc, 0.9), 4 * s, A(Qt::black, 0.6));
+		const double th2 = th;
+		auto xFor = [&](double w) {
+			if (pos == "left")
+				return r.right() - w;
+			if (pos == "top" || pos == "bottom")
+				return r.left() + (r.width() - w) / 2;
+			return r.left();
+		};
+		DrawText(p, f, xFor(TextW(f, t)), r.top(), t, tc, 6 * s, A(Qt::black, 0.6));
+		DrawText(p, sf, xFor(TextW(sf, sub)), r.top() + th2, sub, A(tc, 0.9), 4 * s, A(Qt::black, 0.6));
 		return img;
 	}
 	QPainterPath box = Rounded(r, 12 * s);
-	SoftShadow(p, box, 10 * s, 4 * s, 0.3);
 	if (style == "rounded") {
 		QLinearGradient lg(r.topLeft(), r.bottomRight());
 		lg.setColorAt(0, c1.lighter(110));
@@ -986,8 +1025,7 @@ QImage AppendLogoText(const QImage &base, double pad, const GraphicSpec &g, cons
 	p.fillRect(QRectF(r.left(), r.top(), accent, r.height()), style == "rounded" ? c2 : c1);
 	p.restore();
 	const QColor rc = Readable(tc, style == "rounded" ? c1 : c2);
-	DrawText(p, f, r.left() + accent + inX, r.top() + inY, t, rc);
-	DrawText(p, sf, r.left() + accent + inX + 2 * s, r.top() + inY + th, sub, A(rc, 0.85));
+	DrawLogoLines(p, pos, QRectF(r.left() + accent + inX, r.top() + inY, textW, th + sh), f, sf, t, sub, rc, s);
 	return img;
 }
 
@@ -1013,7 +1051,6 @@ QImage RenderLogo(const GraphicSpec &g)
 		Begin(p, img, g);
 		const QRectF r(pad, pad, w, h);
 		QPainterPath box = Rounded(r, 14 * s);
-		SoftShadow(p, box, 10 * s, 4 * s, 0.3);
 		QLinearGradient lg(r.topLeft(), r.bottomRight());
 		lg.setColorAt(0, c1.lighter(110));
 		lg.setColorAt(1, c1.darker(125));
@@ -1035,7 +1072,6 @@ QImage RenderLogo(const GraphicSpec &g)
 		const QRectF r(pad, pad, d, d);
 		QPainterPath circle;
 		circle.addEllipse(r);
-		SoftShadow(p, circle, 10 * s, 4 * s, 0.3);
 		p.fillPath(circle, c2);
 		QPainterPath inner;
 		inner.addEllipse(r.adjusted(ring, ring, -ring, -ring));
@@ -1054,25 +1090,29 @@ QImage RenderLogo(const GraphicSpec &g)
 	if (style == "card") {
 		const QImage fit = FitImage(src, 320 * s, 150 * s);
 		const double inP = 18 * s;
+		const std::string pos = LogoTextPos(g);
 		const QString t = U(g.text1), sub = U(g.text2);
 		const QFont f = Font(40 * s, QFont::Black, g.italic), sf = Font(18 * s, QFont::Bold, g.italic);
 		const double th = t.isEmpty() ? 0 : QFontMetricsF(f).height(), sh = sub.isEmpty() ? 0 : QFontMetricsF(sf).height();
 		const double tw = std::max(TextW(f, t), TextW(sf, sub));
-		const double gap = tw > 0 ? 18 * s : 0;
-		const double w = fit.width() + gap + tw + inP * 2, h = std::max<double>(fit.height(), th + sh) + inP * 2;
+		QPointF ip, tp;
+		QSizeF content;
+		if (tw > 0)
+			LayoutLogo(pos, fit.width(), fit.height(), tw, th + sh, 18 * s, ip, tp, content);
+		else
+			content = QSizeF(fit.width(), fit.height());
+		const double w = content.width() + inP * 2, h = content.height() + inP * 2;
 		QImage img = Canvas(pad * 2 + w, pad * 2 + h);
 		QPainter p;
 		Begin(p, img, g);
 		const QRectF r(pad, pad, w, h);
 		QPainterPath box = Rounded(r, 18 * s);
-		SoftShadow(p, box, 10 * s, 4 * s, 0.3);
 		p.fillPath(box, c2);
 		p.fillRect(QRectF(r.left() + 18 * s, r.bottom() - 5 * s, w - 36 * s, 5 * s), c1);
-		p.drawImage(QPointF(r.left() + inP, r.top() + (h - fit.height()) / 2), fit);
-		const double tx = r.left() + inP + fit.width() + gap, ty = r.top() + (h - th - sh) / 2;
-		const QColor rc = Readable(tc, c2);
-		DrawText(p, f, tx, ty, t, rc);
-		DrawText(p, sf, tx + 2 * s, ty + th, sub, A(rc, 0.85));
+		p.drawImage(QPointF(r.left() + inP + ip.x(), r.top() + inP + ip.y()), fit);
+		if (tw > 0)
+			DrawLogoLines(p, pos, QRectF(r.left() + inP + tp.x(), r.top() + inP + tp.y(), tw, th + sh), f, sf, t, sub,
+				      Readable(tc, c2), s);
 		return img;
 	}
 
@@ -1086,7 +1126,6 @@ QImage RenderLogo(const GraphicSpec &g)
 		const QRectF r(pad, pad, w, h);
 		const double radius = style == "rounded" ? 26 * s : 4 * s;
 		QPainterPath box = Rounded(r, radius);
-		SoftShadow(p, box, 10 * s, 4 * s, 0.3);
 		p.fillPath(box, style == "frame" ? c2 : c1);
 		QPainterPath inner = Rounded(r.adjusted(border + inP, border + inP, -border - inP, -border - inP),
 					     std::max(0.0, radius - border - inP));
@@ -1136,7 +1175,6 @@ QImage RenderTextGraphic(const GraphicSpec &g)
 		Begin(p, img, g);
 		const QRectF r(pad, pad, tw + inX * 2, th + inY * 2);
 		QPainterPath box = Rounded(r, 14 * s);
-		SoftShadow(p, box, 10 * s, 4 * s, 0.3);
 		p.fillPath(box, c1);
 		DrawText(p, f, r.left() + inX, r.top() + inY, t, tc);
 		return img;
@@ -1148,7 +1186,7 @@ QImage RenderTextGraphic(const GraphicSpec &g)
 		QPainterPath path;
 		path.setFillRule(Qt::WindingFill);
 		path.addText(pad, pad + QFontMetricsF(f).ascent(), f, t);
-		SoftShadow(p, path, 8 * s, 5 * s, 0.6);
+		DropShadow(p, path, 8 * s, 5 * s, 0.6); // 「陰影」版型本身就是陰影字
 		p.fillPath(path, tc);
 		return img;
 	}
@@ -1174,7 +1212,6 @@ QImage RenderTextGraphic(const GraphicSpec &g)
 		QPainterPath path;
 		path.setFillRule(Qt::WindingFill);
 		path.addText(pad + sw, pad + sw + QFontMetricsF(f).ascent(), f, t);
-		SoftShadow(p, path, 6 * s, 4 * s, 0.45);
 		p.strokePath(path, QPen(c2, sw * 2, Qt::SolidLine, Qt::RoundCap, Qt::RoundJoin));
 		QLinearGradient lg(0, pad, 0, pad + th);
 		lg.setColorAt(0, tc);
@@ -1189,7 +1226,6 @@ QImage RenderTextGraphic(const GraphicSpec &g)
 		QPainter p;
 		Begin(p, img, g);
 		QPainterPath band = Slanted(pad, pad, tw + inX * 2 + slant, th + 16 * s, slant, slant);
-		SoftShadow(p, band, 10 * s, 5 * s);
 		QLinearGradient lg(pad, pad, pad, pad + th);
 		lg.setColorAt(0, c1.lighter(112));
 		lg.setColorAt(1, c1.darker(118));

@@ -127,6 +127,14 @@ OverlayDialog::OverlayDialog(const GraphicSpec &spec, const QString &name, QWidg
 		text2_->setPlaceholderText(QStringLiteral("選填：文字下方的小字"));
 		form->addRow(QStringLiteral("台標文字"), text1_);
 		form->addRow(QStringLiteral("副標"), text2_);
+		textPos_ = new QComboBox;
+		const char *pos[][2] = {{"圖片右邊", "right"}, {"圖片左邊", "left"}, {"圖片上方", "top"}, {"圖片下方", "bottom"}};
+		for (const auto &ps : pos)
+			textPos_->addItem(QString::fromUtf8(ps[0]), QString::fromLatin1(ps[1]));
+		textPos_->setCurrentIndex(std::max(0, textPos_->findData(Q(spec_.textPos))));
+		textPos_->setToolTip(QStringLiteral("有選圖片又填了台標文字時，文字要放在圖片的哪一邊"));
+		form->addRow(QStringLiteral("文字位置"), textPos_);
+		connect(textPos_, &QComboBox::activated, this, [this](int) { UpdatePreview(); });
 	}
 
 	if (k == "lower") {
@@ -291,6 +299,8 @@ void OverlayDialog::Collect()
 		spec_.italic = slant_->currentIndex() == 1;
 	if (orient_)
 		spec_.vertical = orient_->currentIndex() == 1;
+	if (textPos_)
+		spec_.textPos = S(textPos_->currentData().toString());
 	if (opacity_)
 		spec_.opacity = opacity_->value();
 	if (speed_)

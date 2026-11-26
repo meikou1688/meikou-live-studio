@@ -457,6 +457,30 @@ int RunSelfTest(QApplication &app, const QString &configDir, const QString &repo
 				noText << QString::fromUtf8(st.id.c_str());
 		}
 		rep.Check(QStringLiteral("圖片台標可以同時顯示台標文字"), noText.isEmpty(), noText.join(u'、'));
+		QStringList badPos;
+		for (const char *styleId : {"plain", "circle", "card", "rounded", "frame", "watermark"}) {
+			GraphicSpec g;
+			g.kind = "logo";
+			g.file = imgPath.toUtf8().toStdString();
+			ApplyGraphicDefaults(g);
+			g.style = styleId;
+			ApplyStyleColors(g);
+			g.text1 = "MEIKOU LIVE";
+			g.text2 = "網路直播台";
+			g.textPos = "right";
+			const QImage right = RenderGraphic(g);
+			g.textPos = "left";
+			const QImage left = RenderGraphic(g);
+			g.textPos = "top";
+			const QImage top = RenderGraphic(g);
+			g.textPos = "bottom";
+			const QImage bottom = RenderGraphic(g);
+			const bool ok = left.size() == right.size() && left != right && top.size() == bottom.size() && top != bottom &&
+					top.height() > right.height() && top.width() < right.width();
+			if (!ok)
+				badPos << QString::fromUtf8(styleId);
+		}
+		rep.Check(QStringLiteral("台標文字可以放在圖片右、左、上、下"), badPos.isEmpty(), badPos.join(u'、'));
 	}
 
 	// 疊加屬於場景：每個場景有自己的訊號源與疊加

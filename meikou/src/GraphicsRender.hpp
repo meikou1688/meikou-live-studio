@@ -29,6 +29,7 @@ struct GraphicSpec {
 	int size = 100;    // 字級 %
 	bool italic = false; // 字形：false 正體、true 斜體
 	bool vertical = false; // 姓名條方向：false 橫式、true 直式
+	std::string textPos = "right"; // 台標文字位置：right／left／top／bottom
 };
 
 struct StyleChoice {
