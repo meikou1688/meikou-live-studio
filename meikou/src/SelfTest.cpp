@@ -565,6 +565,27 @@ int RunSelfTest(QApplication &app, const QString &configDir, const QString &repo
 			rep.Check(QStringLiteral("停止推流"), waitFor([&] { return !engine.Streaming(); }, 10000));
 		}
 		engine.Targets().clear();
+
+		// 伺服器位址錯誤：要顯示失敗原因、不能當機、狀態要回到未推流
+		Target badTarget;
+		badTarget.name = "錯誤位址";
+		badTarget.server = "rtmp://127.0.0.1:1/live";
+		badTarget.key = "x";
+		engine.Targets().push_back(badTarget);
+		{
+			std::lock_guard<std::mutex> lock(evMutex);
+			events.clear();
+		}
+		std::string be;
+		if (engine.StartStreaming(cfg, be)) {
+			const bool failedReported = waitFor([&] { return eventSeen(0, "failed") || eventSeen(0, "stopped"); }, 20000);
+			pump(1500);
+			rep.Check(QStringLiteral("伺服器連不上時回報失敗、不當機"), failedReported && !engine.Streaming(),
+				  QString::fromUtf8(engine.Targets()[0].status.c_str()));
+		} else {
+			rep.Check(QStringLiteral("伺服器連不上時回報失敗、不當機"), true, QString::fromUtf8(be.c_str()));
+		}
+		engine.Targets().clear();
 	} else {
 		rep.Check(QStringLiteral("推流（沒有指定測試伺服器，略過）"), false, QString(), true);
 	}

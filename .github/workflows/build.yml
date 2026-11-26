@@ -119,7 +119,7 @@ jobs:
           $stage = Join-Path $env:RUNNER_TEMP 'meikou-portable'
           $st = Join-Path $pwd 'selftest'
           New-Item -ItemType Directory -Force $st | Out-Null
-          $sink = Start-Process python -ArgumentList 'tools/rtmp_sink.py','--port','1935','--report',"$st\rtmp_sink.json",'--seconds','400' -PassThru -NoNewWindow
+          $sink = Start-Process python -ArgumentList 'tools/rtmp_sink.py','--port','1935','--report',"$st\rtmp_sink.json",'--seconds','400','--connect-delay','2.5' -PassThru -NoNewWindow
           Start-Sleep 2
           $bin = "$stage\bin\64bit"
           $p = Start-Process "$bin\meikou-live-studio.exe" -ArgumentList '--selftest','--report',"$st\report.json",'--shots',"$st",'--rtmp','rtmp://127.0.0.1:1935/live' -WorkingDirectory $bin -PassThru
@@ -244,7 +244,7 @@ jobs:
         continue-on-error: true
         run: |
           mkdir -p selftest
-          python3 tools/rtmp_sink.py --port 1935 --report selftest/rtmp_sink.json --seconds 400 &
+          python3 tools/rtmp_sink.py --port 1935 --report selftest/rtmp_sink.json --seconds 400 --connect-delay 2.5 &
           local sink=$!
           sleep 2
           local exe=$(find "stage/Meikou Live Studio.app/Contents/MacOS" -type f -perm +111 | head -n 1)

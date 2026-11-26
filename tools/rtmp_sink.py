@@ -199,8 +199,13 @@ class Conn:
                 return p["type"], p["sid"], p["ts"], payload
 
 
+CONNECT_DELAY = 0.0
+
+
 def handle(sock):
     c = Conn(sock)
+    if CONNECT_DELAY > 0:
+        time.sleep(CONNECT_DELAY)  # 模擬連到遠端伺服器（例如 YouTube）需要的時間
     c.handshake()
     while True:
         mtype, sid, ts, payload = c.read_message()
@@ -274,7 +279,10 @@ def main():
     ap.add_argument("--port", type=int, default=1935)
     ap.add_argument("--report", default="rtmp_sink.json")
     ap.add_argument("--seconds", type=float, default=600)
+    ap.add_argument("--connect-delay", type=float, default=0.0)
     a = ap.parse_args()
+    global CONNECT_DELAY
+    CONNECT_DELAY = a.connect_delay
 
     srv = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     srv.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
