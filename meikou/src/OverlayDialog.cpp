@@ -354,7 +354,7 @@ void OverlayDialog::UpdatePlainRows()
 {
 	if (!form_ || !decor_)
 		return;
-	const bool plain = spec_.style == "plain";
+	const bool plain = spec_.style == "textonly";
 	const QString dc = decor_->currentData().toString();
 	form_->setRowVisible(decor_, plain);
 	form_->setRowVisible(strokeBtn_, plain && (dc == QLatin1String("stroke") || dc == QLatin1String("both")));

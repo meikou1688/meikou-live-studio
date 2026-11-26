@@ -1404,19 +1404,19 @@ std::vector<StyleChoice> GraphicStyles(const std::string &kind)
 	if (kind == "lower")
 		return {{"news", "新聞台"},     {"clean", "簡約白卡"},   {"sport", "斜切運動"}, {"pill", "圓角膠囊"},
 			{"outline", "透明描邊"}, {"glass", "玻璃漸層"},   {"split", "雙色分割"}, {"bracket", "角框"},
-			{"ribbon", "緞帶"},      {"underline", "細線極簡"}, {"plain", "純文字（透明背景）"}};
+			{"ribbon", "緞帶"},      {"underline", "細線極簡"}, {"textonly", "純文字（透明背景）"}};
 	if (kind == "clock")
 		return {{"dark", "深色圓角"}, {"live", "LIVE 紅標"}, {"outline", "透明描邊"}, {"neon", "霓虹"},
-			{"flip", "翻頁卡"},   {"pill", "膠囊"},       {"minimal", "極簡直線"}, {"plain", "純文字（透明背景）"}};
+			{"flip", "翻頁卡"},   {"pill", "膠囊"},       {"minimal", "極簡直線"}, {"textonly", "純文字（透明背景）"}};
 	if (kind == "ticker")
 		return {{"news", "新聞快訊"}, {"light", "白底"},     {"gradient", "漸層"},
-			{"glass", "半透明"},   {"sport", "斜切運動"}, {"minimal", "無底描邊"}, {"plain", "純文字（透明背景）"}};
+			{"glass", "半透明"},   {"sport", "斜切運動"}, {"minimal", "無底描邊"}, {"textonly", "純文字（透明背景）"}};
 	if (kind == "logo")
 		return {{"plain", "原圖"},          {"circle", "圓形徽章"},  {"card", "圓角卡片"},     {"rounded", "圓角裁切"},
 			{"frame", "框線＋LIVE"},    {"watermark", "半透明浮水印"}, {"text", "文字台標"},
-			{"plain", "純文字（透明背景）"}};
+			{"textonly", "純文字（透明背景）"}};
 	if (kind == "text")
-		return {{"plain", "純文字（透明背景）"}, {"stroke", "描邊"}, {"shadow", "陰影"}, {"box", "底框"},
+		return {{"textonly", "純文字（透明背景）"}, {"stroke", "描邊"}, {"shadow", "陰影"}, {"box", "底框"},
 			{"neon", "霓虹"},   {"gradient", "漸層字"}, {"ribbon", "斜切底"}};
 	return {};
 }
@@ -1441,7 +1441,7 @@ void ApplyPalette(GraphicSpec &g, const Palette &pal)
 	g.color = pal.primary;
 	g.color2 = lightBase ? pal.light : pal.dark;
 	g.textColor = lightBase ? pal.dark : pal.light;
-	if (g.style == "plain") { // 純文字：字用主色、邊框用深色
+	if (g.style == "textonly") { // 純文字：字用主色、邊框用深色
 		g.textColor = pal.primary == 0xFF2B2B2B ? 0xFFFFFFFF : pal.primary;
 		g.strokeColor = pal.dark;
 	}
@@ -1487,7 +1487,7 @@ void ApplyStyleColors(GraphicSpec &g)
 		{"text", "gradient", 0xFFF59E0B, 0xFF1F1300, 0xFFFFFFFF},
 		{"text", "ribbon", 0xFFD7263D, 0xFF000000, 0xFFFFFFFF},
 	};
-	if (g.style == "plain") { // 純文字預設：白字、黑邊框色、不加裝飾
+	if (g.style == "textonly") { // 純文字預設：白字、黑邊框色、不加裝飾
 		g.textColor = 0xFFFFFFFF;
 		g.strokeColor = 0xFF000000;
 		g.color2 = 0xFF000000;
@@ -1501,7 +1501,7 @@ void ApplyStyleColors(GraphicSpec &g)
 			g.textColor = pr.tc;
 		}
 	}
-	if (g.kind == "logo" && g.style != "plain") {
+	if (g.kind == "logo" && g.style != "textonly") {
 		if (g.style != "text") {
 			g.color = 0xFF0ABAB5;
 			g.color2 = 0xFFFFFFFF;
@@ -1542,7 +1542,7 @@ void LoadBrandFonts()
 
 QImage RenderGraphic(const GraphicSpec &g)
 {
-	if (g.style == "plain" && (g.kind == "lower" || g.kind == "clock" || g.kind == "logo" || g.kind == "text"))
+	if (g.style == "textonly" && (g.kind == "lower" || g.kind == "clock" || g.kind == "logo" || g.kind == "text"))
 		return RenderPlain(g);
 	if (g.kind == "lower")
 		return RenderLower(g);
@@ -1563,7 +1563,7 @@ TickerParts RenderTicker(const GraphicSpec &g)
 	const QString label = U(g.label), text = U(g.text1);
 
 	TickerParts out;
-	if (g.style == "plain") {
+	if (g.style == "textonly") {
 		// 純文字跑馬燈：沒有底條，標籤和內容都只有字（可選陰影、邊框）
 		const Deco d = DecoOf(g, L.textF.pixelSize());
 		out.bar = Canvas(W, h);

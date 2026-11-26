@@ -450,7 +450,7 @@ int RunSelfTest(QApplication &app, const QString &configDir, const QString &repo
 	{
 		QStringList noText;
 		for (const auto &st : GraphicStyles("logo")) {
-			if (st.id == "text")
+			if (st.id == "text" || st.id == "textonly") // 這兩種沒有圖片
 				continue;
 			GraphicSpec g;
 			g.kind = "logo";
@@ -499,7 +499,7 @@ int RunSelfTest(QApplication &app, const QString &configDir, const QString &repo
 				GraphicSpec g;
 				g.kind = kind;
 				ApplyGraphicDefaults(g);
-				g.style = "plain";
+				g.style = "textonly";
 				ApplyStyleColors(g);
 				g.text1 = "直播 LIVE 123";
 				g.text2 = "主持人";
@@ -717,61 +717,6 @@ int RunSelfTest(QApplication &app, const QString &configDir, const QString &repo
 	}
 
 	// ------------------------------------------------ 專案
-	rep.Section(QStringLiteral("影片播放"));
-	{
-		const QString clip = QDir(configDir).filePath(QStringLiteral("selftest-obs_x264.mkv"));
-		obs_data_t *ms = obs_data_create();
-		obs_data_set_bool(ms, "is_local_file", true);
-		obs_data_set_string(ms, "local_file", clip.toUtf8().constData());
-		obs_data_set_bool(ms, "looping", true);
-		obs_data_set_bool(ms, "restart_on_activate", true);
-		Input *mv = engine.AddInput("ffmpeg_source", "測試影片", ms);
-		obs_data_release(ms);
-		Input *mscene = engine.CreateScene("影片測試場景");
-		if (mv && mscene) {
-			engine.AddSourceToScene(mscene, mv);
-			engine.SetPreview(mscene);
-			obs_source_t *src = mv->source;
-			const bool playing = waitFor(
-				[&] { return obs_source_get_width(src) > 0 && obs_source_media_get_state(src) == OBS_MEDIA_STATE_PLAYING; },
-				10000);
-			rep.Check(QStringLiteral("影片放在預覽就開始播放"), playing,
-				  QStringLiteral("%1×%2").arg(obs_source_get_width(src)).arg(obs_source_get_height(src)));
-			pump(2500);
-			obs_source_media_play_pause(src, true);
-			pump(500);
-			const int64_t tp = obs_source_media_get_time(src);
-			pump(1000);
-			const int64_t tp2 = obs_source_media_get_time(src);
-			rep.Check(QStringLiteral("暫停"), obs_source_media_get_state(src) == OBS_MEDIA_STATE_PAUSED && std::llabs(tp2 - tp) < 300,
-				  QStringLiteral("%1 → %2 ms").arg(tp).arg(tp2));
-			obs_source_media_play_pause(src, false);
-			pump(800);
-			rep.Check(QStringLiteral("繼續播放"), obs_source_media_get_state(src) == OBS_MEDIA_STATE_PLAYING);
-			pump(1500);
-			const int64_t before = obs_source_media_get_time(src);
-			engine.Cut();
-			pump(900);
-			const int64_t after = obs_source_media_get_time(src);
-			rep.Check(QStringLiteral("送出時影片自動從頭播放"), engine.Program() == mscene && after < before && after < 2000,
-				  QStringLiteral("送出前 %1 ms、送出後 %2 ms").arg(before).arg(after));
-			obs_source_media_stop(src);
-			pump(600);
-			rep.Check(QStringLiteral("停止"), obs_source_media_get_state(src) == OBS_MEDIA_STATE_STOPPED);
-			obs_source_media_restart(src);
-			rep.Check(QStringLiteral("重播"),
-				  waitFor([&] { return obs_source_media_get_state(src) == OBS_MEDIA_STATE_PLAYING; }, 5000));
-			engine.Cut(); // 撤回，播出換回原本的場景
-			pump(300);
-		} else {
-			rep.Check(QStringLiteral("影片放在預覽就開始播放"), false, QStringLiteral("無法建立影片訊號源"));
-		}
-		if (mv)
-			engine.RemoveInput(mv->uid);
-		if (mscene)
-			engine.RemoveInput(mscene->uid);
-	}
-
 	rep.Section(QStringLiteral("網路影片"));
 	{
 		const bool urlOk = IsPageUrl(QStringLiteral("https://www.youtube.com/watch?v=jNQXAC9IVRw")) &&
@@ -1047,6 +992,62 @@ int RunSelfTest(QApplication &app, const QString &configDir, const QString &repo
 		window->grab().toImage().save(QDir(shotsDir).filePath(QStringLiteral("ui-scene2.png")));
 		rep.Check(QStringLiteral("點場景只顯示該場景的訊號源與疊加"), aSrc == 2 && aOvl == 0 && bSrc == 1 && bOvl == 4,
 			  QStringLiteral("場景一：%1 訊號源／%2 疊加；場景二：%3／%4").arg(aSrc).arg(aOvl).arg(bSrc).arg(bOvl));
+		// 影片：主視窗開著（預覽畫面持續在畫）時才測，跟實際使用一樣
+		rep.Section(QStringLiteral("影片播放"));
+		{
+			const QString clip = QDir(configDir).filePath(QStringLiteral("selftest-obs_x264.mkv"));
+			obs_data_t *ms = obs_data_create();
+			obs_data_set_bool(ms, "is_local_file", true);
+			obs_data_set_string(ms, "local_file", clip.toUtf8().constData());
+			obs_data_set_bool(ms, "looping", true);
+			obs_data_set_bool(ms, "restart_on_activate", true);
+			Input *mv = engine.AddInput("ffmpeg_source", "測試影片", ms);
+			obs_data_release(ms);
+			Input *mscene = engine.CreateScene("影片測試場景");
+			if (mv && mscene) {
+				engine.AddSourceToScene(mscene, mv);
+				engine.SetPreview(mscene);
+				obs_source_t *src = mv->source;
+				const bool playing = waitFor(
+					[&] { return obs_source_get_width(src) > 0 && obs_source_media_get_state(src) == OBS_MEDIA_STATE_PLAYING; },
+					10000);
+				rep.Check(QStringLiteral("影片放在預覽就開始播放"), playing,
+					  QStringLiteral("%1×%2").arg(obs_source_get_width(src)).arg(obs_source_get_height(src)));
+				pump(2500);
+				obs_source_media_play_pause(src, true);
+				pump(500);
+				const int64_t tp = obs_source_media_get_time(src);
+				pump(1000);
+				const int64_t tp2 = obs_source_media_get_time(src);
+				rep.Check(QStringLiteral("暫停"), obs_source_media_get_state(src) == OBS_MEDIA_STATE_PAUSED && std::llabs(tp2 - tp) < 300,
+					  QStringLiteral("%1 → %2 ms").arg(tp).arg(tp2));
+				obs_source_media_play_pause(src, false);
+				pump(800);
+				rep.Check(QStringLiteral("繼續播放"), obs_source_media_get_state(src) == OBS_MEDIA_STATE_PLAYING);
+				pump(1500);
+				const int64_t before = obs_source_media_get_time(src);
+				engine.Cut();
+				pump(900);
+				const int64_t after = obs_source_media_get_time(src);
+				rep.Check(QStringLiteral("送出時影片自動從頭播放"), engine.Program() == mscene && after < before && after < 2000,
+					  QStringLiteral("送出前 %1 ms、送出後 %2 ms").arg(before).arg(after));
+				obs_source_media_stop(src);
+				pump(600);
+				rep.Check(QStringLiteral("停止"), obs_source_media_get_state(src) == OBS_MEDIA_STATE_STOPPED);
+				obs_source_media_restart(src);
+				rep.Check(QStringLiteral("重播"),
+					  waitFor([&] { return obs_source_media_get_state(src) == OBS_MEDIA_STATE_PLAYING; }, 5000));
+				engine.Cut(); // 撤回，播出換回原本的場景
+				pump(300);
+			} else {
+				rep.Check(QStringLiteral("影片放在預覽就開始播放"), false, QStringLiteral("無法建立影片訊號源"));
+			}
+			if (mv)
+				engine.RemoveInput(mv->uid);
+			if (mscene)
+				engine.RemoveInput(mscene->uid);
+		}
+		rep.Section(QStringLiteral("介面"));
 
 		for (const char *kind : {"lower", "clock", "ticker", "logo", "text"}) {
 			GraphicSpec g;
