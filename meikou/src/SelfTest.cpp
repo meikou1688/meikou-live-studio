@@ -25,6 +25,7 @@
 #include <QListWidget>
 #include <QMenu>
 #include <QProcess>
+#include <QSettings>
 #include <QSplitter>
 #include <QTabWidget>
 #include <QPushButton>
@@ -912,6 +913,25 @@ int RunSelfTest(QApplication &app, const QString &configDir, const QString &repo
 				  sz.size() == 2 ? QStringLiteral("%1 ｜ %2").arg(sz[0]).arg(sz[1]) : QStringLiteral("找不到分隔"));
 			window->showNormal();
 			pump(500);
+		}
+		{
+			// 鎖定版面：分隔線拖不動、記住鎖定當下的版面；解除後可以再調整
+			QAction *lock = nullptr;
+			for (QAction *act : window->findChildren<QAction *>())
+				if (act->isCheckable() && act->text().startsWith(QStringLiteral("鎖定版面")))
+					lock = act;
+			auto *ms = window->findChild<QSplitter *>(QStringLiteral("mainSplit"));
+			bool lockedOk = false, unlockedOk = false;
+			if (lock && ms) {
+				lock->setChecked(true);
+				pump(200);
+				lockedOk = !ms->handle(1)->isEnabled() && QSettings().value("window/layoutLocked").toBool() &&
+					   !QSettings().value("window/lockedMainSplit").toByteArray().isEmpty();
+				lock->setChecked(false);
+				pump(200);
+				unlockedOk = ms->handle(1)->isEnabled() && !QSettings().value("window/layoutLocked").toBool();
+			}
+			rep.Check(QStringLiteral("鎖定版面（固定分隔線、記住大小位置）與解除鎖定"), lockedOk && unlockedOk);
 		}
 		bool helpOk = false;
 		for (QPushButton *b : window->findChildren<QPushButton *>()) {

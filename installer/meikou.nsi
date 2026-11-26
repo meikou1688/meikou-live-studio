@@ -94,4 +94,6 @@ Section "Uninstall"
   RMDir /r "$INSTDIR"
   DeleteRegKey HKCU "${UNINSTKEY}"
   DeleteRegKey HKCU "Software\${APPNAME}"
+  ; 移除程式時一併清掉記住的視窗版面（重新安裝會回到預設版面）；專案與其他設定保留
+  DeleteRegKey HKCU "Software\Meikou\Meikou Live Studio\window"
 SectionEnd

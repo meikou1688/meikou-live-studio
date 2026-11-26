@@ -61,9 +61,9 @@ QTabBar::tab { background: #1c1e26; padding: 5px 12px; border: 1px solid #2a2d38
 QTabBar::tab:selected { background: #2a2d38; color: white; border-bottom: 2px solid #00e5c0; }
 QListWidget, QTableWidget, QLineEdit, QSpinBox, QComboBox { background: #20222b; border: 1px solid #3a3e4c; border-radius: 4px; padding: 3px; }
 QHeaderView::section { background: #1c1e26; border: none; padding: 4px; color: #b8bdc9; }
-QPushButton#mediaBtn, QPushButton#mediaPlay { padding: 0 4px; min-width: 22px; font-size: 11px; background: #262935; }
+QPushButton#mediaBtn, QPushButton#mediaPlay { padding: 0; background: #3a3e4c; border: 1px solid #555a6a; }
 QPushButton#mediaBtn:hover, QPushButton#mediaPlay:hover { border-color: #00e5c0; }
-QLabel#mediaTime { color: #8a90a0; font-size: 11px; padding-left: 4px; }
+QLabel#mediaTime { color: #c9cdd6; font-size: 12px; padding-left: 4px; }
 QFrame#targetCard { background: #1c1e26; border: 1px solid #2a2d38; border-radius: 6px; }
 QPushButton#targetSummary { text-align: left; background: #20222b; border: 1px dashed #3a3e4c; padding: 6px 10px; color: #b8bdc9; }
 QPushButton#targetSummary:hover { border-color: #00e5c0; color: #e6e8ec; }

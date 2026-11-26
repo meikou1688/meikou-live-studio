@@ -43,6 +43,9 @@
 #include <QShortcut>
 #include <QSpinBox>
 #include <QSplitter>
+#include <QSplitterHandle>
+#include <QPolygonF>
+#include <QPainter>
 #include <QStandardPaths>
 #include <QStyle>
 #include <QTabWidget>
@@ -128,6 +131,42 @@ QPushButton *BigButton(const QString &text, const QString &objName)
 	b->setMinimumHeight(36);
 	b->setCursor(Qt::PointingHandCursor);
 	return b;
+}
+
+// 播放控制圖示：用畫的，大小清楚、各平台一致
+QIcon MediaIcon(const QString &kind)
+{
+	const int L = 16, dpr = 3;
+	QPixmap pm(L * dpr, L * dpr);
+	pm.fill(Qt::transparent);
+	QPainter p(&pm);
+	p.setRenderHint(QPainter::Antialiasing);
+	p.scale(dpr, dpr);
+	p.setPen(Qt::NoPen);
+	p.setBrush(Qt::white);
+	if (kind == QLatin1String("play")) {
+		QPolygonF tri;
+		tri << QPointF(4, 2) << QPointF(14, 8) << QPointF(4, 14);
+		p.drawPolygon(tri);
+	} else if (kind == QLatin1String("pause")) {
+		p.drawRoundedRect(QRectF(3, 2, 3.6, 12), 0.8, 0.8);
+		p.drawRoundedRect(QRectF(9.4, 2, 3.6, 12), 0.8, 0.8);
+	} else if (kind == QLatin1String("stop")) {
+		p.drawRoundedRect(QRectF(3, 3, 10, 10), 1.2, 1.2);
+	} else { // restart：逆時針箭頭
+		QPen pen(Qt::white, 2.2, Qt::SolidLine, Qt::RoundCap);
+		p.setPen(pen);
+		p.setBrush(Qt::NoBrush);
+		p.drawArc(QRectF(2.5, 2.5, 11, 11), 100 * 16, 290 * 16);
+		p.setPen(Qt::NoPen);
+		p.setBrush(Qt::white);
+		QPolygonF head;
+		head << QPointF(1.5, 1.0) << QPointF(7.8, 2.2) << QPointF(3.0, 6.8);
+		p.drawPolygon(head);
+	}
+	p.end();
+	pm.setDevicePixelRatio(dpr);
+	return QIcon(pm);
 }
 
 void Repolish(QWidget *w)
@@ -306,6 +345,20 @@ QWidget *MainWindow::BuildTopBar()
 	help->addSeparator();
 	help->addAction(QStringLiteral("關於 Meikou Live Studio"), this, [this] { ShowAboutDialog(this); });
 	helpBtn->setMenu(help);
+
+	// 版面：調整好分隔線與視窗大小後鎖定，之後每次開啟都一樣
+	layoutBtn_ = new QPushButton;
+	layoutBtn_->setObjectName(QStringLiteral("flat"));
+	auto *layoutMenu = new QMenu(layoutBtn_);
+	lockAction_ = layoutMenu->addAction(QStringLiteral("鎖定版面（記住目前視窗大小、位置與各區比例）"));
+	lockAction_->setCheckable(true);
+	connect(lockAction_, &QAction::toggled, this, [this](bool on) { SetLayoutLocked(on, true); });
+	resetLayoutAction_ = layoutMenu->addAction(QStringLiteral("恢復預設版面"), this, [this] {
+		mainSplit_->setSizes({520, 420});
+		bottomSplit_->setSizes({800, 800});
+	});
+	layoutBtn_->setMenu(layoutMenu);
+	h->addWidget(layoutBtn_);
 	h->addWidget(helpBtn);
 	clockLabel_ = new QLabel;
 	clockLabel_->setObjectName(QStringLiteral("clock"));
@@ -932,12 +985,15 @@ void MainWindow::RebuildRows()
 			auto *ctl = new QHBoxLayout;
 			ctl->setSpacing(2);
 			const std::string uid = l.uid;
-			auto mk = [&](const QString &text, const QString &tip, auto fn) {
-				auto *mb = new QPushButton(text);
+			auto mk = [&](const QString &icon, const QString &tip, auto fn) {
+				auto *mb = new QPushButton;
+				mb->setIcon(MediaIcon(icon));
+				mb->setIconSize(QSize(14, 14));
+				mb->setProperty("icon", icon);
 				mb->setObjectName(QStringLiteral("mediaBtn"));
 				mb->setToolTip(tip);
 				mb->setFocusPolicy(Qt::NoFocus);
-				mb->setFixedHeight(20);
+				mb->setFixedSize(30, 24);
 				connect(mb, &QPushButton::clicked, this, [this, uid, fn] {
 					if (Input *in = engine_.FindInput(uid))
 						fn(in->source);
@@ -946,19 +1002,19 @@ void MainWindow::RebuildRows()
 				ctl->addWidget(mb);
 				return mb;
 			};
-			QPushButton *pp = mk(QStringLiteral("❚❚"), QStringLiteral("暫停／繼續播放"), [](obs_source_t *s) {
+			QPushButton *pp = mk(QStringLiteral("pause"), QStringLiteral("暫停／繼續播放"), [](obs_source_t *s) {
 				obs_source_media_play_pause(s, obs_source_media_get_state(s) == OBS_MEDIA_STATE_PLAYING);
 			});
 			pp->setProperty("media", Q(uid));
 			pp->setObjectName(QStringLiteral("mediaPlay"));
-			mk(QStringLiteral("■"), QStringLiteral("停止"), [](obs_source_t *s) { obs_source_media_stop(s); });
-			mk(QStringLiteral("↻"), QStringLiteral("從頭重播"), [](obs_source_t *s) { obs_source_media_restart(s); });
+			mk(QStringLiteral("stop"), QStringLiteral("停止"), [](obs_source_t *s) { obs_source_media_stop(s); });
+			mk(QStringLiteral("restart"), QStringLiteral("從頭重播"), [](obs_source_t *s) { obs_source_media_restart(s); });
 			auto *time = new QLabel;
 			time->setObjectName(QStringLiteral("mediaTime"));
 			time->setProperty("media", Q(uid));
 			ctl->addWidget(time, 1);
 			bv->addLayout(ctl);
-			box->setMaximumWidth(170);
+			box->setMaximumWidth(190);
 			busLayout_->addWidget(box);
 			continue;
 		}
@@ -1017,9 +1073,10 @@ void MainWindow::RefreshMediaLabels()
 		if (!in || !in->source)
 			continue;
 		const bool playing = obs_source_media_get_state(in->source) == OBS_MEDIA_STATE_PLAYING;
-		const QString t = playing ? QStringLiteral("❚❚") : QStringLiteral("▶");
-		if (b->text() != t) {
-			b->setText(t);
+		const QString icon = playing ? QStringLiteral("pause") : QStringLiteral("play");
+		if (b->property("icon").toString() != icon) {
+			b->setProperty("icon", icon);
+			b->setIcon(MediaIcon(icon));
 			b->setToolTip(playing ? QStringLiteral("暫停") : QStringLiteral("播放"));
 		}
 	}
@@ -1897,9 +1954,20 @@ void MainWindow::LoadSettings()
 	// main.cpp 已依這個設定啟動視訊，這裡只同步畫面上的選項
 	appliedFpsIndex_ = std::clamp(st.value("output/fpsIndex", 3).toInt(), 0, kFpsCount - 1);
 	fpsBox_->setCurrentIndex(appliedFpsIndex_);
-	restoreGeometry(st.value("window/geometry").toByteArray());
-	mainSplit_->restoreState(st.value("window/mainSplit2").toByteArray());
-	bottomSplit_->restoreState(st.value("window/bottomSplit2").toByteArray());
+	const bool locked = st.value("window/layoutLocked", false).toBool();
+	if (locked) { // 鎖定的版面：一律恢復鎖定當下的大小、位置與比例
+		restoreGeometry(st.value("window/lockedGeometry").toByteArray());
+		mainSplit_->restoreState(st.value("window/lockedMainSplit").toByteArray());
+		bottomSplit_->restoreState(st.value("window/lockedBottomSplit").toByteArray());
+	} else {
+		restoreGeometry(st.value("window/geometry").toByteArray());
+		mainSplit_->restoreState(st.value("window/mainSplit2").toByteArray());
+		bottomSplit_->restoreState(st.value("window/bottomSplit2").toByteArray());
+	}
+	lockAction_->blockSignals(true);
+	lockAction_->setChecked(locked);
+	lockAction_->blockSignals(false);
+	SetLayoutLocked(locked, false);
 }
 
 void MainWindow::SaveSettings()
@@ -2009,6 +2077,33 @@ void MainWindow::ShowUncleanShutdownNotice()
 		ExportReport();
 }
 
+void MainWindow::SetLayoutLocked(bool locked, bool save)
+{
+	layoutLocked_ = locked;
+	for (QSplitter *sp : {mainSplit_, bottomSplit_}) {
+		for (int i = 1; i < sp->count(); i++) {
+			QSplitterHandle *hd = sp->handle(i);
+			hd->setEnabled(!locked);
+			hd->setCursor(locked ? Qt::ArrowCursor
+					     : (sp->orientation() == Qt::Vertical ? Qt::SplitVCursor : Qt::SplitHCursor));
+		}
+	}
+	layoutBtn_->setText(locked ? QStringLiteral("版面：已鎖定") : QStringLiteral("版面：可調整"));
+	layoutBtn_->setToolTip(locked ? QStringLiteral("分隔線已固定，每次開啟都恢復鎖定時的大小與位置。要調整請先解除鎖定。")
+				      : QStringLiteral("拖曳分隔線調整各區大小，調好後選「鎖定版面」"));
+	resetLayoutAction_->setEnabled(!locked);
+	if (!save)
+		return;
+	QSettings st;
+	st.setValue("window/layoutLocked", locked);
+	if (locked) {
+		st.setValue("window/lockedGeometry", saveGeometry());
+		st.setValue("window/lockedMainSplit", mainSplit_->saveState());
+		st.setValue("window/lockedBottomSplit", bottomSplit_->saveState());
+		blog(LOG_INFO, "Layout locked");
+	}
+}
+
 void MainWindow::closeEvent(QCloseEvent *event)
 {
 	if (engine_.Streaming() || engine_.Recording()) {
@@ -2021,9 +2116,11 @@ void MainWindow::closeEvent(QCloseEvent *event)
 	}
 	SaveSettings();
 	SaveProject();
-	QSettings().setValue("window/geometry", saveGeometry());
-	QSettings().setValue("window/mainSplit2", mainSplit_->saveState());
-	QSettings().setValue("window/bottomSplit2", bottomSplit_->saveState());
+	if (!layoutLocked_) { // 鎖定時不覆蓋，保留鎖定當下的版面
+		QSettings().setValue("window/geometry", saveGeometry());
+		QSettings().setValue("window/mainSplit2", mainSplit_->saveState());
+		QSettings().setValue("window/bottomSplit2", bottomSplit_->saveState());
+	}
 	statsTimer_->stop();
 	saveTimer_->stop();
 	pvwDisplay_->DestroyDisplay();

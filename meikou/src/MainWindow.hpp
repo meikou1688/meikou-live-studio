@@ -7,6 +7,7 @@
 
 #include <vector>
 
+class QAction;
 class QCheckBox;
 class QGroupBox;
 class QSplitter;
@@ -106,6 +107,11 @@ private:
 	QWidget *rowsPanel_ = nullptr; // 下方左半：場景／訊號源／疊加
 	QSplitter *mainSplit_ = nullptr;
 	QSplitter *bottomSplit_ = nullptr;
+	QPushButton *layoutBtn_ = nullptr;
+	QAction *lockAction_ = nullptr;
+	QAction *resetLayoutAction_ = nullptr;
+	bool layoutLocked_ = false;
+	void SetLayoutLocked(bool locked, bool save);
 	QGroupBox *ovlGroup_ = nullptr;
 	std::string currentScene_;
 	QString rowSig_;
