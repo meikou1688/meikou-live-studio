@@ -315,6 +315,9 @@ MainWindow::MainWindow(Engine &engine, const QString &projectPath, QWidget *pare
 	UpdateStats();
 	connect(phone_, &PhoneLink::ClientsChanged, this, &MainWindow::UpdatePhoneButton);
 	UpdatePhoneButton();
+	if (QSettings().value("phone/remote", false).toBool())
+		phone_->SetRemoteEnabled(true); // 上次有開外網連線
+
 }
 
 MainWindow::~MainWindow()
@@ -398,7 +401,7 @@ QWidget *MainWindow::BuildTopBar()
 	layoutBtn_->setMenu(layoutMenu);
 	phoneBtn_ = new QPushButton(QStringLiteral("手機攝影機"));
 	phoneBtn_->setObjectName(QStringLiteral("flat"));
-	phoneBtn_->setToolTip(QStringLiteral("用 Meikou Live Mobile 當無線攝影機：QR Code、連線狀態、Tally"));
+	phoneBtn_->setToolTip(QStringLiteral("用 Meikou Live Mobile 當無線攝影機：QR Code、連線狀態、Tally、外網連線"));
 	connect(phoneBtn_, &QPushButton::clicked, this, [this] { ShowPhoneDialog(); });
 	h->addWidget(phoneBtn_);
 	h->addWidget(layoutBtn_);
@@ -1434,7 +1437,7 @@ std::string MainWindow::AddPhoneCamera()
 	const int n = (int)PhoneCams(engine_).size() + 1;
 	const std::string name = "手機 CAM " + std::to_string(n);
 	obs_data_t *s = obs_data_create();
-	ApplyPhoneSettings(s, NextPhonePort(engine_));
+	ApplyPhoneSettings(s, NextPhonePort(engine_), NewPhonePass());
 	Input *in = engine_.AddInput("ffmpeg_source", name, s);
 	obs_data_release(s);
 	if (!in) {
@@ -1445,6 +1448,7 @@ std::string MainWindow::AddPhoneCamera()
 		engine_.AddSourceToScene(scene, in);
 	SourcesChanged();
 	UpdatePhoneButton();
+	phone_->RefreshRemotePorts(); // 外網連線開著時，新的埠也一起開
 	return in->uid;
 }
 

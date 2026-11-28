@@ -1,8 +1,10 @@
 #include "PhoneDialog.hpp"
 #include "Engine.hpp"
 #include "PhoneLink.hpp"
+#include "RemoteAccess.hpp"
 #include "third_party/qrcodegen/qrcodegen.hpp"
 
+#include <QCheckBox>
 #include <QComboBox>
 #include <QHBoxLayout>
 #include <QLabel>
@@ -91,16 +93,23 @@ PhoneDialog::PhoneDialog(Engine &engine, PhoneLink &link, std::function<std::str
 	right->addWidget(info_);
 	auto *steps = new QLabel(QStringLiteral(
 		"<b>連線步驟</b><ol style='margin-left:-20px'>"
-		"<li>手機和這台電腦連同一個 Wi‑Fi／區網。</li>"
 		"<li>手機開啟 <b>Meikou Live Mobile</b>，切到「導播機」模式，按「連線導播機」。</li>"
-		"<li>按「掃描 QR Code」掃左邊的圖，或在「搜尋到的導播機」清單點這個攝影機。</li>"
+		"<li>按「掃描 QR Code」掃左邊的圖。和這台電腦在同一個 Wi‑Fi 時，也可以直接在「搜尋到的導播機」清單點選。</li>"
+		"<li>手機在外面用 4G／5G：先勾選下方「外網連線」，再掃 QR Code。</li>"
 		"</ol>"
 		"連上後，這個訊號源被切到<b style='color:#E0263A'>播出</b>時手機會亮紅框，"
-		"在<b style='color:#34C27A'>預覽</b>時亮綠框。<br><br>"
+		"在<b style='color:#34C27A'>預覽</b>時亮綠框。畫面以 SRT 加密傳送，密碼在 QR Code 裡。<br><br>"
 		"第一次使用時，Windows 防火牆或 macOS 的「區域網路」權限會詢問是否允許，請按「允許」。"));
 	steps->setWordWrap(true);
 	steps->setTextFormat(Qt::RichText);
 	right->addWidget(steps);
+	remoteBox_ = new QCheckBox(QStringLiteral("外網連線（手機在外面用 4G／5G 連回來）"));
+	right->addWidget(remoteBox_);
+	remoteStatus_ = new QLabel;
+	remoteStatus_->setWordWrap(true);
+	remoteStatus_->setTextInteractionFlags(Qt::TextSelectableByMouse);
+	remoteStatus_->setStyleSheet(QStringLiteral("color:#A3A9B3"));
+	right->addWidget(remoteStatus_);
 	error_ = new QLabel;
 	error_->setWordWrap(true);
 	error_->setStyleSheet(QStringLiteral("color:#F2A33A"));
@@ -129,6 +138,12 @@ PhoneDialog::PhoneDialog(Engine &engine, PhoneLink &link, std::function<std::str
 		RefreshStatus();
 	});
 	connect(&link_, &PhoneLink::ClientsChanged, this, &PhoneDialog::RefreshStatus);
+	remoteBox_->setChecked(link_.Remote()->Enabled());
+	connect(remoteBox_, &QCheckBox::toggled, this, [this](bool on) {
+		link_.SetRemoteEnabled(on);
+		RefreshStatus();
+	});
+	connect(link_.Remote(), &RemoteAccess::Changed, this, &PhoneDialog::RefreshStatus);
 	timer_ = new QTimer(this);
 	timer_->setInterval(500);
 	connect(timer_, &QTimer::timeout, this, &PhoneDialog::RefreshStatus);
@@ -166,6 +181,22 @@ void PhoneDialog::RefreshStatus()
 	const auto cams = PhoneCams(engine_);
 	const auto it = std::find_if(cams.begin(), cams.end(), [this](const PhoneCam &c) { return c.uid == focus_; });
 	const QStringList hosts = PhoneLink::LocalAddresses();
+
+	// 外網連線狀態＋Tailscale
+	{
+		const RemoteAccess *r = link_.Remote();
+		QString text = r->StatusText();
+		const QStringList ts = RemoteAccess::TailscaleAddresses();
+		if (!ts.isEmpty())
+			text += QStringLiteral("\nTailscale：已偵測到（%1），手機也登入同一個 Tailscale 帳號就能從任何網路連線。").arg(ts.first());
+		else if (r->GetState() == RemoteAccess::State::SharedIp || r->GetState() == RemoteAccess::State::NoRouter ||
+			 r->GetState() == RemoteAccess::State::Failed)
+			text += QStringLiteral("\nTailscale：到 tailscale.com 免費下載，電腦和手機登入同一個帳號後，重新開這個視窗並掃描 QR Code。");
+		remoteStatus_->setText(text);
+		remoteBox_->blockSignals(true);
+		remoteBox_->setChecked(r->Enabled());
+		remoteBox_->blockSignals(false);
+	}
 
 	if (!link_.Running() || !link_.Error().isEmpty())
 		error_->setText(link_.Error().isEmpty() ? QStringLiteral("手機連線服務沒有啟動。") : link_.Error());

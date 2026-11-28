@@ -52,6 +52,8 @@ target_sources(
     src/PhoneLink.hpp
     src/PhoneDialog.cpp
     src/PhoneDialog.hpp
+    src/RemoteAccess.cpp
+    src/RemoteAccess.hpp
     src/third_party/qrcodegen/qrcodegen.cpp
     src/third_party/qrcodegen/qrcodegen.hpp
     resources/meikou.qrc

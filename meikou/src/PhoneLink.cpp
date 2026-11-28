@@ -1,5 +1,6 @@
 #include "PhoneLink.hpp"
 #include "Engine.hpp"
+#include "RemoteAccess.hpp"
 
 #include <QHostAddress>
 #include <QHostInfo>
@@ -8,6 +9,8 @@
 #include <QJsonObject>
 #include <QNetworkDatagram>
 #include <QNetworkInterface>
+#include <QRandomGenerator>
+#include <QSettings>
 #include <QSysInfo>
 #include <QTcpServer>
 #include <QTcpSocket>
@@ -75,9 +78,40 @@ std::vector<PhoneCam> PhoneCams(const Engine &engine)
 	for (const auto &in : engine.Inputs()) {
 		if (!IsPhoneInput(in.get()))
 			continue;
-		cams.push_back({in->uid, in->name, PhonePort(in.get())});
+		obs_data_t *s = obs_source_get_settings(in->source);
+		const char *pass = s ? obs_data_get_string(s, "meikou_phone_pass") : "";
+		cams.push_back({in->uid, in->name, PhonePort(in.get()), pass ? pass : ""});
+		obs_data_release(s);
 	}
 	return cams;
+}
+
+std::string NewPhonePass()
+{
+	// 20 個英數字（SRT 密碼要 10–79 個字元）
+	static const char chars[] = "ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnpqrstuvwxyz23456789";
+	std::string s;
+	for (int i = 0; i < 20; i++)
+		s += chars[QRandomGenerator::system()->bounded((int)sizeof(chars) - 1)];
+	return s;
+}
+
+void EnsurePhonePasses(Engine &engine)
+{
+	for (const auto &in : engine.Inputs()) {
+		if (!IsPhoneInput(in.get()))
+			continue;
+		obs_data_t *s = obs_source_get_settings(in->source);
+		const std::string pass = obs_data_get_string(s, "meikou_phone_pass");
+		if (pass.empty()) {
+			obs_data_t *upd = obs_data_create();
+			ApplyPhoneSettings(upd, (int)obs_data_get_int(s, "meikou_phone_port"), NewPhonePass());
+			obs_source_update(in->source, upd);
+			obs_data_release(upd);
+			blog(LOG_INFO, "[phone] added SRT passphrase to %s", in->name.c_str());
+		}
+		obs_data_release(s);
+	}
 }
 
 int NextPhonePort(const Engine &engine)
@@ -89,10 +123,13 @@ int NextPhonePort(const Engine &engine)
 	return port;
 }
 
-void ApplyPhoneSettings(obs_data_t *s, int port)
+void ApplyPhoneSettings(obs_data_t *s, int port, const std::string &pass)
 {
-	// SRT 監聽：手機（caller）連進來就有畫面，斷線後自動重新等待
-	const std::string url = "srt://0.0.0.0:" + std::to_string(port) + "?mode=listener&latency=200000";
+	// SRT 監聽：手機（caller）連進來就有畫面，斷線後自動重新等待；AES-128 加密
+	std::string url = "srt://0.0.0.0:" + std::to_string(port) + "?mode=listener&latency=200000";
+	if (!pass.empty())
+		url += "&passphrase=" + pass + "&pbkeylen=16";
+	obs_data_set_string(s, "meikou_phone_pass", pass.c_str());
 	obs_data_set_bool(s, "is_local_file", false);
 	obs_data_set_string(s, "input", url.c_str());
 	obs_data_set_string(s, "input_format", "mpegts");
@@ -156,6 +193,23 @@ const char *TallyCode(Tally t)
 PhoneLink::PhoneLink(Engine &engine, QObject *parent) : QObject(parent), engine_(engine)
 {
 	clock_.start();
+	remote_ = new RemoteAccess(this);
+}
+
+void PhoneLink::SetRemoteEnabled(bool on)
+{
+	QSettings().setValue("phone/remote", on);
+	EnsurePhonePasses(engine_);
+	std::vector<RemoteAccess::Port> ports{{kControlPort, true}};
+	for (const auto &cam : PhoneCams(engine_))
+		ports.push_back({cam.port, false});
+	remote_->SetEnabled(on, ports);
+}
+
+void PhoneLink::RefreshRemotePorts()
+{
+	if (remote_->Enabled())
+		SetRemoteEnabled(true);
 }
 
 PhoneLink::~PhoneLink()
@@ -187,6 +241,7 @@ bool PhoneLink::Start(QString &error)
 	timer_->start();
 
 	running_ = tcp_->isListening() || udp_->state() == QAbstractSocket::BoundState;
+	EnsurePhonePasses(engine_);
 	error_ = error;
 	blog(error.isEmpty() ? LOG_INFO : LOG_WARNING, "[phone] link started (udp %d, tcp %d) %s", (int)kDiscoveryPort,
 	     (int)kControlPort, error.toUtf8().constData());
@@ -235,14 +290,33 @@ QStringList PhoneLink::LocalAddresses()
 	return preferred + others;
 }
 
+QStringList PhoneLink::QrHosts() const
+{
+	// 手機會同時試連這些位址，哪個先通就用哪個：區網（最多 2 個）、Tailscale、外網
+	QStringList hosts;
+	for (const QString &h : LocalAddresses()) {
+		const QHostAddress a(h);
+		if (RemoteAccess::IsPrivate(a) && hosts.size() < 2)
+			hosts << h;
+	}
+	for (const QString &h : RemoteAccess::TailscaleAddresses().mid(0, 1))
+		hosts << h;
+	if (remote_ && remote_->GetState() == RemoteAccess::State::Ready && !remote_->ExternalIp().isEmpty())
+		hosts << remote_->ExternalIp();
+	if (hosts.isEmpty())
+		hosts = LocalAddresses().mid(0, 2);
+	hosts.removeDuplicates();
+	return hosts;
+}
+
 QString PhoneLink::QrText(const PhoneCam &cam) const
 {
-	const QStringList hosts = LocalAddresses();
-	return QStringLiteral("meikoulive://cam?v=1&h=%1&p=%2&c=%3&id=%4&n=%5")
-		.arg(hosts.mid(0, 3).join(u','))
+	return QStringLiteral("meikoulive://cam?v=1&h=%1&p=%2&c=%3&id=%4&k=%5&n=%6")
+		.arg(QrHosts().join(u','))
 		.arg(cam.port)
 		.arg(kControlPort)
 		.arg(QString::fromUtf8(QUrl::toPercentEncoding(Q(cam.uid))))
+		.arg(QString::fromUtf8(QUrl::toPercentEncoding(Q(cam.pass))))
 		.arg(QString::fromUtf8(QUrl::toPercentEncoding(Q(cam.name))));
 }
 
@@ -272,12 +346,14 @@ void PhoneLink::OnDatagrams()
 		const QJsonObject req = QJsonDocument::fromJson(dg.data()).object();
 		if (req.value(QStringLiteral("t")).toString() != QLatin1String("discover"))
 			continue;
+		EnsurePhonePasses(engine_);
 		QJsonArray cams;
 		for (const auto &cam : PhoneCams(engine_)) {
 			QJsonObject o;
 			o["id"] = Q(cam.uid);
 			o["name"] = Q(cam.name);
 			o["port"] = cam.port;
+			o["key"] = Q(cam.pass); // 只在區網回覆；外網要掃 QR Code
 			o["busy"] = !DeviceFor(cam.uid).isEmpty();
 			cams.append(o);
 		}
@@ -343,6 +419,13 @@ void PhoneLink::OnReadyRead(QTcpSocket *sock)
 			QJsonObject err;
 			err["t"] = QStringLiteral("error");
 			err["msg"] = QStringLiteral("導播機找不到這個手機攝影機訊號源，請重新搜尋或掃描 QR Code");
+			Send(sock, err);
+			continue;
+		}
+		if (!it->pass.empty() && S(msg.value(QStringLiteral("key")).toString()) != it->pass) {
+			QJsonObject err;
+			err["t"] = QStringLiteral("error");
+			err["msg"] = QStringLiteral("密碼不符，請重新掃描導播機的 QR Code");
 			Send(sock, err);
 			continue;
 		}

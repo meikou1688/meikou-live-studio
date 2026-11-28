@@ -6,6 +6,7 @@
 #include <functional>
 #include <string>
 
+class QCheckBox;
 class QComboBox;
 class QLabel;
 class QTimer;
@@ -41,6 +42,8 @@ private:
 	QLabel *status_ = nullptr;
 	QLabel *info_ = nullptr;
 	QLabel *error_ = nullptr;
+	QCheckBox *remoteBox_ = nullptr;
+	QLabel *remoteStatus_ = nullptr;
 	QTimer *timer_ = nullptr;
 };
 

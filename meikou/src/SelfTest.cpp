@@ -15,6 +15,7 @@
 #include "Platform.hpp"
 #include "PhoneDialog.hpp"
 #include "PhoneLink.hpp"
+#include "RemoteAccess.hpp"
 
 #include <QApplication>
 #include <QDir>
@@ -1202,11 +1203,13 @@ int RunSelfTest(QApplication &app, const QString &configDir, const QString &repo
 	rep.Section(QStringLiteral("手機攝影機"));
 	{
 		const int port = NextPhonePort(engine);
+		const std::string pass = NewPhonePass();
 		obs_data_t *ps = obs_data_create();
-		ApplyPhoneSettings(ps, port);
+		ApplyPhoneSettings(ps, port, pass);
 		Input *phone = engine.AddInput("ffmpeg_source", "手機 CAM 1", ps);
 		obs_data_release(ps);
-		rep.Check(QStringLiteral("新增手機攝影機訊號源（SRT 監聽）"), phone && IsPhoneInput(phone) && PhonePort(phone) == port,
+		rep.Check(QStringLiteral("新增手機攝影機訊號源（SRT 監聽、AES 加密）"),
+			  phone && IsPhoneInput(phone) && PhonePort(phone) == port && pass.size() == 20,
 			  QStringLiteral("埠 %1").arg(port));
 
 		PhoneLink link(engine);
@@ -1214,12 +1217,14 @@ int RunSelfTest(QApplication &app, const QString &configDir, const QString &repo
 		rep.Check(QStringLiteral("啟動區網搜尋與 Tally 服務"), link.Start(linkErr), linkErr);
 
 		if (phone) {
-			const QString qrText = link.QrText({phone->uid, phone->name, port});
+			const QString qrText = link.QrText({phone->uid, phone->name, port, pass});
 			const QImage qrImg = RenderQrCode(qrText, 6);
 			if (!shotsDir.isEmpty())
 				qrImg.save(QDir(shotsDir).filePath(QStringLiteral("phone-qr.png")));
 			rep.Check(QStringLiteral("產生 QR Code"),
-				  !qrImg.isNull() && qrText.startsWith(QLatin1String("meikoulive://cam?v=1&h=")), qrText);
+				  !qrImg.isNull() && qrText.startsWith(QLatin1String("meikoulive://cam?v=1&h=")) &&
+					  qrText.contains(QStringLiteral("&k=") + QString::fromUtf8(pass.c_str())),
+				  qrText);
 		}
 
 		// 區網搜尋
@@ -1237,7 +1242,8 @@ int RunSelfTest(QApplication &app, const QString &configDir, const QString &repo
 		for (const auto &v : studio.value(QStringLiteral("cams")).toArray()) {
 			const QJsonObject o = v.toObject();
 			listed = listed || (phone && o.value(QStringLiteral("id")).toString() == QString::fromUtf8(phone->uid.c_str()) &&
-					    o.value(QStringLiteral("port")).toInt() == port);
+					    o.value(QStringLiteral("port")).toInt() == port &&
+					    o.value(QStringLiteral("key")).toString() == QString::fromUtf8(pass.c_str()));
 		}
 		rep.Check(QStringLiteral("區網搜尋：導播機回覆並列出手機攝影機"),
 			  listed && studio.value(QStringLiteral("ctl")).toInt() == PhoneLink::kControlPort,
@@ -1261,10 +1267,30 @@ int RunSelfTest(QApplication &app, const QString &configDir, const QString &repo
 			}
 		};
 		if (tcpOk && phone) {
+			// 密碼錯誤要被拒絕
+			{
+				QTcpSocket bad;
+				bad.connectToHost(QHostAddress::LocalHost, PhoneLink::kControlPort);
+				QByteArray badBuf;
+				if (waitFor([&] { return bad.state() == QAbstractSocket::ConnectedState; }, 3000)) {
+					QJsonObject h;
+					h["t"] = QStringLiteral("hello");
+					h["id"] = QString::fromUtf8(phone->uid.c_str());
+					h["key"] = QStringLiteral("wrong-password");
+					bad.write(QJsonDocument(h).toJson(QJsonDocument::Compact) + "\n");
+					waitFor([&] { badBuf.append(bad.readAll()); return badBuf.contains("\n"); }, 3000);
+				}
+				const QJsonObject m = QJsonDocument::fromJson(badBuf.left(badBuf.indexOf('\n'))).object();
+				rep.Check(QStringLiteral("Tally：密碼錯誤的手機會被拒絕"),
+					  m.value(QStringLiteral("t")).toString() == QLatin1String("error") && link.ConnectedCount() == 0,
+					  QString::fromUtf8(badBuf.trimmed()));
+				bad.abort();
+			}
 			QJsonObject hello;
 			hello["t"] = QStringLiteral("hello");
 			hello["v"] = 1;
 			hello["id"] = QString::fromUtf8(phone->uid.c_str());
+			hello["key"] = QString::fromUtf8(pass.c_str());
 			hello["name"] = QStringLiteral("CAM 1");
 			hello["device"] = QStringLiteral("自我巡檢");
 			tc.write(QJsonDocument(hello).toJson(QJsonDocument::Compact) + "\n");
@@ -1310,6 +1336,18 @@ int RunSelfTest(QApplication &app, const QString &configDir, const QString &repo
 			}
 		}
 		tc.abort();
+
+		// 外網連線：CI 主機沒有家用路由器，要能在時限內回報「找不到路由器」而不是卡住
+		{
+			RemoteAccess *ra = link.Remote();
+			ra->searchTimeoutMs = 2500;
+			ra->SetEnabled(true, {{PhoneLink::kControlPort, true}, {port, false}});
+			const bool settled = waitFor([&] { return ra->GetState() != RemoteAccess::State::Searching; }, 8000);
+			rep.Check(QStringLiteral("外網連線：自動開埠（UPnP）在時限內有結果"), settled, ra->StatusText());
+			rep.Check(QStringLiteral("外網連線：QR Code 依網路狀態帶入位址"), !link.QrHosts().isEmpty(),
+				  link.QrHosts().join(u','));
+			ra->SetEnabled(false, {});
+		}
 		link.Stop();
 		if (phone) {
 			if (engine.Preview() == phone)
