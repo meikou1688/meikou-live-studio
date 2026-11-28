@@ -7,6 +7,8 @@
 #include "Display.hpp"
 #include "Log.hpp"
 #include "OverlayDialog.hpp"
+#include "PhoneDialog.hpp"
+#include "PhoneLink.hpp"
 #include "Platform.hpp"
 #include "PropertiesDialog.hpp"
 
@@ -225,6 +227,13 @@ MainWindow::MainWindow(Engine &engine, const QString &projectPath, QWidget *pare
 	setWindowTitle(QStringLiteral("Meikou Live Studio ") + QString::fromUtf8(MEIKOU_VERSION));
 	resize(1600, 940);
 
+	// 手機攝影機：區網搜尋（UDP 47800）與 Tally（TCP 47801）
+	phone_ = new PhoneLink(engine_, this);
+	{
+		QString phoneErr;
+		phone_->Start(phoneErr);
+	}
+
 	auto *central = new QWidget;
 	auto *root = new QVBoxLayout(central);
 	root->setContentsMargins(0, 0, 0, 0);
@@ -304,6 +313,8 @@ MainWindow::MainWindow(Engine &engine, const QString &projectPath, QWidget *pare
 	RebuildOverlayList();
 	RebuildTargets();
 	UpdateStats();
+	connect(phone_, &PhoneLink::ClientsChanged, this, &MainWindow::UpdatePhoneButton);
+	UpdatePhoneButton();
 }
 
 MainWindow::~MainWindow()
@@ -385,6 +396,11 @@ QWidget *MainWindow::BuildTopBar()
 		bottomSplit_->setSizes({800, 800});
 	});
 	layoutBtn_->setMenu(layoutMenu);
+	phoneBtn_ = new QPushButton(QStringLiteral("手機攝影機"));
+	phoneBtn_->setObjectName(QStringLiteral("flat"));
+	phoneBtn_->setToolTip(QStringLiteral("用 Meikou Live 手機版當無線攝影機：QR Code、連線狀態、Tally"));
+	connect(phoneBtn_, &QPushButton::clicked, this, [this] { ShowPhoneDialog(); });
+	h->addWidget(phoneBtn_);
 	h->addWidget(layoutBtn_);
 	h->addWidget(helpBtn);
 	clockLabel_ = new QLabel;
@@ -562,6 +578,7 @@ QWidget *MainWindow::BuildSwitcher()
 		{"視窗擷取", "window"},
 		{"遊戲擷取", "game"},
 		{"網路影片（RTMP／SRT／RTSP／HLS／網址）", "url"},
+		{"手機攝影機（Meikou Live 手機版）", "phone"},
 		{"影片／音樂檔案", "media"},
 		{"圖片", "image"},
 		{"純色", "color"},
@@ -1317,6 +1334,12 @@ void MainWindow::AddSourceOfType(const QString &kind)
 		obs_data_set_int(s, "buffering_mb", 1);
 		obs_data_set_bool(s, "hw_decode", true);
 		openProps = false;
+	} else if (kind == QLatin1String("phone")) {
+		cancel();
+		const std::string uid = AddPhoneCamera();
+		if (!uid.empty())
+			ShowPhoneDialog(uid);
+		return;
 	} else if (kind == QLatin1String("media")) {
 		const QString f = QFileDialog::getOpenFileName(
 			this, QStringLiteral("選擇影片或音樂"), QString(),
@@ -1395,6 +1418,42 @@ void MainWindow::AddSourceOfType(const QString &kind)
 	SourcesChanged();
 	if (openProps)
 		EditSource(in->uid);
+}
+
+std::string MainWindow::AddPhoneCamera()
+{
+	const int n = (int)PhoneCams(engine_).size() + 1;
+	const std::string name = "手機 CAM " + std::to_string(n);
+	obs_data_t *s = obs_data_create();
+	ApplyPhoneSettings(s, NextPhonePort(engine_));
+	Input *in = engine_.AddInput("ffmpeg_source", name, s);
+	obs_data_release(s);
+	if (!in) {
+		QMessageBox::warning(this, windowTitle(), QStringLiteral("無法建立手機攝影機訊號源。"));
+		return std::string();
+	}
+	if (Input *scene = EnsureScene())
+		engine_.AddSourceToScene(scene, in);
+	SourcesChanged();
+	UpdatePhoneButton();
+	return in->uid;
+}
+
+void MainWindow::ShowPhoneDialog(const std::string &focusUid)
+{
+	if (!phone_)
+		return;
+	PhoneDialog dlg(engine_, *phone_, [this] { return AddPhoneCamera(); }, focusUid, this);
+	dlg.exec();
+	UpdatePhoneButton();
+}
+
+void MainWindow::UpdatePhoneButton()
+{
+	if (!phoneBtn_ || !phone_)
+		return;
+	const int n = phone_->ConnectedCount();
+	phoneBtn_->setText(n > 0 ? QStringLiteral("手機攝影機（%1 台連線）").arg(n) : QStringLiteral("手機攝影機"));
 }
 
 void MainWindow::EditSource(const std::string &uid)

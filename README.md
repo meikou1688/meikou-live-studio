@@ -28,6 +28,7 @@
 - 混音台：音量表、推桿、靜音／監聽／關閉；開啟即自動載入系統聲音與麥克風
 - 推流：同時推多個平台（YouTube、Facebook、Twitch、自訂 RTMP／RTMPS），只編碼一次；自動選顯示卡編碼器、斷線自動重連、網路壅塞自動降碼率、低延遲
 - 錄影：MKV
+- 手機攝影機：搭配免費的 **Meikou Live 手機版**（Android），把手機當無線攝影機。「＋ 新增訊號源 → 手機攝影機」後，手機掃 QR Code 或在區網自動搜尋就能連上（SRT 傳輸）；這台被切到播出時手機亮紅框、預覽時亮綠框（Tally）。手機和電腦要在同一個網路，第一次使用時請允許防火牆／區域網路權限（使用 UDP 47800、TCP 47801，以及每台手機一個 SRT 埠，從 9001 開始）
 - 1920×1080 輸出，24／25／29.97／30／60 fps
 
 串流金鑰只存在你自己的電腦上，不會上傳。
@@ -49,4 +50,5 @@
 ## 授權
 
 本專案以 GNU General Public License v2.0 或更新版本（GPL-2.0-or-later）釋出，詳見 [LICENSE](LICENSE)。
-內含的 OBS Studio／libobs、FFmpeg、x264 等元件依其各自的授權條款使用；Qt 6 依 LGPL-3.0 使用。
+內含的 OBS Studio／libobs、FFmpeg、x264 等元件依其各自的授權條款使用；Qt 6 依 LGPL-3.0 使用；
+QR Code 產生使用 Project Nayuki 的 QR Code generator library（MIT）。

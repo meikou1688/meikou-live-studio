@@ -12,6 +12,8 @@
 #include "MainWindow.hpp"
 #include "OverlayDialog.hpp"
 #include "Platform.hpp"
+#include "PhoneDialog.hpp"
+#include "PhoneLink.hpp"
 
 #include <QApplication>
 #include <QDir>
@@ -19,12 +21,14 @@
 #include <QFile>
 #include <QFileInfo>
 #include <QFontDatabase>
+#include <QHostAddress>
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <QLineEdit>
 #include <QListWidget>
 #include <QMenu>
+#include <QNetworkDatagram>
 #include <QProcess>
 #include <QSettings>
 #include <QSplitter>
@@ -33,7 +37,9 @@
 #include <QPushButton>
 #include <QStandardPaths>
 #include <QSysInfo>
+#include <QTcpSocket>
 #include <QThread>
+#include <QUdpSocket>
 
 #include <util/base.h>
 
@@ -1147,6 +1153,116 @@ int RunSelfTest(QApplication &app, const QString &configDir, const QString &repo
 		window->close();
 		pump(300);
 		delete window;
+	}
+
+	// ------------------------------------------------ 手機攝影機
+	// 模擬 Meikou Live 手機版：區網搜尋（UDP）、Tally（TCP）、QR Code
+	rep.Section(QStringLiteral("手機攝影機"));
+	{
+		const int port = NextPhonePort(engine);
+		obs_data_t *ps = obs_data_create();
+		ApplyPhoneSettings(ps, port);
+		Input *phone = engine.AddInput("ffmpeg_source", "手機 CAM 1", ps);
+		obs_data_release(ps);
+		rep.Check(QStringLiteral("新增手機攝影機訊號源（SRT 監聽）"), phone && IsPhoneInput(phone) && PhonePort(phone) == port,
+			  QStringLiteral("埠 %1").arg(port));
+
+		PhoneLink link(engine);
+		QString linkErr;
+		rep.Check(QStringLiteral("啟動區網搜尋與 Tally 服務"), link.Start(linkErr), linkErr);
+
+		if (phone) {
+			const QString qrText = link.QrText({phone->uid, phone->name, port});
+			const QImage qrImg = RenderQrCode(qrText, 6);
+			if (!shotsDir.isEmpty())
+				qrImg.save(QDir(shotsDir).filePath(QStringLiteral("phone-qr.png")));
+			rep.Check(QStringLiteral("產生 QR Code"),
+				  !qrImg.isNull() && qrText.startsWith(QLatin1String("meikoulive://cam?v=1&h=")), qrText);
+		}
+
+		// 區網搜尋
+		QUdpSocket probe;
+		probe.bind(QHostAddress::AnyIPv4, 0);
+		probe.writeDatagram(QByteArrayLiteral("{\"t\":\"discover\",\"v\":1}"), QHostAddress::LocalHost,
+				    PhoneLink::kDiscoveryPort);
+		QJsonObject studio;
+		waitFor([&] {
+			while (probe.hasPendingDatagrams())
+				studio = QJsonDocument::fromJson(probe.receiveDatagram().data()).object();
+			return studio.value(QStringLiteral("t")).toString() == QLatin1String("studio");
+		}, 4000);
+		bool listed = false;
+		for (const auto &v : studio.value(QStringLiteral("cams")).toArray()) {
+			const QJsonObject o = v.toObject();
+			listed = listed || (phone && o.value(QStringLiteral("id")).toString() == QString::fromUtf8(phone->uid.c_str()) &&
+					    o.value(QStringLiteral("port")).toInt() == port);
+		}
+		rep.Check(QStringLiteral("區網搜尋：導播機回覆並列出手機攝影機"),
+			  listed && studio.value(QStringLiteral("ctl")).toInt() == PhoneLink::kControlPort,
+			  QString::fromUtf8(QJsonDocument(studio).toJson(QJsonDocument::Compact)));
+
+		// Tally
+		QTcpSocket tc;
+		tc.connectToHost(QHostAddress::LocalHost, PhoneLink::kControlPort);
+		const bool tcpOk = waitFor([&] { return tc.state() == QAbstractSocket::ConnectedState; }, 4000);
+		rep.Check(QStringLiteral("Tally：手機可以連上導播機"), tcpOk, tc.errorString());
+		QByteArray tallyBuf;
+		QString tally;
+		auto readTally = [&] {
+			tallyBuf.append(tc.readAll());
+			int nl;
+			while ((nl = tallyBuf.indexOf('\n')) >= 0) {
+				const QJsonObject m = QJsonDocument::fromJson(tallyBuf.left(nl)).object();
+				tallyBuf.remove(0, nl + 1);
+				if (m.value(QStringLiteral("t")).toString() == QLatin1String("tally"))
+					tally = m.value(QStringLiteral("state")).toString();
+			}
+		};
+		if (tcpOk && phone) {
+			QJsonObject hello;
+			hello["t"] = QStringLiteral("hello");
+			hello["v"] = 1;
+			hello["id"] = QString::fromUtf8(phone->uid.c_str());
+			hello["name"] = QStringLiteral("CAM 1");
+			hello["device"] = QStringLiteral("自我巡檢");
+			tc.write(QJsonDocument(hello).toJson(QJsonDocument::Compact) + "\n");
+			rep.Check(QStringLiteral("Tally：連上後收到目前狀態（待命）"),
+				  waitFor([&] { readTally(); return tally == QLatin1String("off"); }, 3000), tally);
+			rep.Check(QStringLiteral("導播機顯示手機已連線"),
+				  link.ConnectedCount() == 1 && !link.DeviceFor(phone->uid).isEmpty());
+
+			engine.SetPreview(phone);
+			rep.Check(QStringLiteral("Tally：放到預覽 → 綠框（pvw）"),
+				  waitFor([&] { readTally(); return tally == QLatin1String("pvw"); }, 3000), tally);
+			engine.Cut();
+			rep.Check(QStringLiteral("Tally：送出到播出 → 紅框（pgm）"),
+				  waitFor([&] { readTally(); return tally == QLatin1String("pgm"); }, 3000), tally);
+			engine.Cut();
+			rep.Check(QStringLiteral("Tally：換掉之後紅框熄滅"),
+				  waitFor([&] { readTally(); return tally != QLatin1String("pgm") && !tally.isEmpty(); }, 3000), tally);
+
+			Input *ts = engine.CreateScene("手機測試場景");
+			if (ts) {
+				engine.AddSourceToScene(ts, phone);
+				engine.SetPreview(ts);
+				engine.Cut();
+				rep.Check(QStringLiteral("Tally：場景裡有手機畫面也算播出"),
+					  waitFor([&] { readTally(); return tally == QLatin1String("pgm"); }, 3000), tally);
+				engine.SetPreview(nullptr);
+				if (engine.WillWithdraw())
+					engine.Cut();
+				pump(200);
+				engine.RemoveInput(ts->uid);
+			}
+		}
+		tc.abort();
+		link.Stop();
+		if (phone) {
+			if (engine.Preview() == phone)
+				engine.SetPreview(nullptr);
+			engine.RemoveInput(phone->uid);
+		}
+		pump(200);
 	}
 
 	// ------------------------------------------------ 結束

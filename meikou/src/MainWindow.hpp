@@ -28,6 +28,7 @@ namespace meikou {
 
 class AudioMixer;
 class Display;
+class PhoneLink;
 
 class MainWindow : public QMainWindow {
 	Q_OBJECT
@@ -81,6 +82,10 @@ private:
 	void AddOverlayOfKind(const QString &kind);
 	void EditOverlay(const std::string &uid);
 	void SourcesChanged();
+	// 手機攝影機（Meikou Live 手機版）
+	std::string AddPhoneCamera();
+	void ShowPhoneDialog(const std::string &focusUid = std::string());
+	void UpdatePhoneButton();
 
 	void DoCut();
 	void DoAuto();
@@ -151,6 +156,8 @@ private:
 	QLabel *statsLabel_ = nullptr;
 	QLabel *clockLabel_ = nullptr;
 	QPushButton *updateBtn_ = nullptr; // 查到新版時出現在頂列
+	QPushButton *phoneBtn_ = nullptr;  // 手機攝影機：QR Code 與連線狀態
+	PhoneLink *phone_ = nullptr;
 	ReleaseInfo newRelease_;
 	void OpenUpdateDialog(bool useKnownRelease);
 	void ExportReport();

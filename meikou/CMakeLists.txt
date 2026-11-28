@@ -12,7 +12,7 @@ endif()
 string(REGEX MATCH "^[0-9]+\\.[0-9]+\\.[0-9]+" MEIKOU_VERSION_NUMERIC "${MEIKOU_VERSION}")
 string(REGEX MATCH "[0-9]+$" MEIKOU_BUILD_NUMBER "${MEIKOU_VERSION}")
 
-find_package(Qt6 REQUIRED Widgets)
+find_package(Qt6 REQUIRED Widgets Network)
 
 add_executable(obs-studio WIN32)
 
@@ -48,6 +48,12 @@ target_sources(
     src/NetMedia.hpp
     src/Updater.cpp
     src/Updater.hpp
+    src/PhoneLink.cpp
+    src/PhoneLink.hpp
+    src/PhoneDialog.cpp
+    src/PhoneDialog.hpp
+    src/third_party/qrcodegen/qrcodegen.cpp
+    src/third_party/qrcodegen/qrcodegen.hpp
     resources/meikou.qrc
 )
 
@@ -64,7 +70,7 @@ if(OS_WINDOWS)
   target_compile_definitions(obs-studio PRIVATE UNICODE _UNICODE NOMINMAX WIN32_LEAN_AND_MEAN)
 endif()
 
-target_link_libraries(obs-studio PRIVATE OBS::libobs Qt::Widgets)
+target_link_libraries(obs-studio PRIVATE OBS::libobs Qt::Widgets Qt::Network)
 
 target_compile_definitions(obs-studio PRIVATE MEIKOU_VERSION="${MEIKOU_VERSION}")
 
@@ -109,5 +115,6 @@ if(OS_MACOS)
                INFOPLIST_KEY_NSCameraUsageDescription "Meikou Live Studio 需要使用攝影機／擷取卡，才能把畫面放進導播。"
                INFOPLIST_KEY_NSMicrophoneUsageDescription "Meikou Live Studio 需要使用麥克風／音訊介面，才能收音與直播。"
                INFOPLIST_KEY_NSAppleEventsUsageDescription "Meikou Live Studio 需要這個權限，才能在背景使用快捷鍵。"
+               INFOPLIST_KEY_NSLocalNetworkUsageDescription "Meikou Live Studio 需要使用區域網路，才能讓 Meikou Live 手機版找到這台導播機、傳送畫面並接收 Tally 燈號。"
   )
 endif()
