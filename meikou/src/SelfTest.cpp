@@ -1156,7 +1156,7 @@ int RunSelfTest(QApplication &app, const QString &configDir, const QString &repo
 	}
 
 	// ------------------------------------------------ 手機攝影機
-	// 模擬 Meikou Live 手機版：區網搜尋（UDP）、Tally（TCP）、QR Code
+	// 模擬 Meikou Live Mobile：區網搜尋（UDP）、Tally（TCP）、QR Code
 	rep.Section(QStringLiteral("手機攝影機"));
 	{
 		const int port = NextPhonePort(engine);

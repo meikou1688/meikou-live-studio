@@ -115,6 +115,6 @@ if(OS_MACOS)
                INFOPLIST_KEY_NSCameraUsageDescription "Meikou Live Studio 需要使用攝影機／擷取卡，才能把畫面放進導播。"
                INFOPLIST_KEY_NSMicrophoneUsageDescription "Meikou Live Studio 需要使用麥克風／音訊介面，才能收音與直播。"
                INFOPLIST_KEY_NSAppleEventsUsageDescription "Meikou Live Studio 需要這個權限，才能在背景使用快捷鍵。"
-               INFOPLIST_KEY_NSLocalNetworkUsageDescription "Meikou Live Studio 需要使用區域網路，才能讓 Meikou Live 手機版找到這台導播機、傳送畫面並接收 Tally 燈號。"
+               INFOPLIST_KEY_NSLocalNetworkUsageDescription "Meikou Live Studio 需要使用區域網路，才能讓 Meikou Live Mobile 找到這台導播機、傳送畫面並接收 Tally 燈號。"
   )
 endif()

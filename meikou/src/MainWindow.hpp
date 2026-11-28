@@ -82,7 +82,7 @@ private:
 	void AddOverlayOfKind(const QString &kind);
 	void EditOverlay(const std::string &uid);
 	void SourcesChanged();
-	// 手機攝影機（Meikou Live 手機版）
+	// 手機攝影機（Meikou Live Mobile）
 	std::string AddPhoneCamera();
 	void ShowPhoneDialog(const std::string &focusUid = std::string());
 	void UpdatePhoneButton();

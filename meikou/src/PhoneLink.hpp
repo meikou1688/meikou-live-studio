@@ -23,7 +23,7 @@ class Engine;
 struct Input;
 
 // ---------------------------------------------------------------------------
-// 手機攝影機（Meikou Live 手機版）
+// 手機攝影機（Meikou Live Mobile）
 //
 // 手機攝影機就是一個「SRT 監聽中」的網路影片訊號源（ffmpeg_source），
 // 設定裡多存 meikou_phone=true 與 meikou_phone_port。手機用 SRT 把畫面送到這個埠。

@@ -92,7 +92,7 @@ PhoneDialog::PhoneDialog(Engine &engine, PhoneLink &link, std::function<std::str
 	auto *steps = new QLabel(QStringLiteral(
 		"<b>連線步驟</b><ol style='margin-left:-20px'>"
 		"<li>手機和這台電腦連同一個 Wi‑Fi／區網。</li>"
-		"<li>手機開啟 <b>Meikou Live</b>，切到「導播機」模式，按「連線導播機」。</li>"
+		"<li>手機開啟 <b>Meikou Live Mobile</b>，切到「導播機」模式，按「連線導播機」。</li>"
 		"<li>按「掃描 QR Code」掃左邊的圖，或在「搜尋到的導播機」清單點這個攝影機。</li>"
 		"</ol>"
 		"連上後，這個訊號源被切到<b style='color:#E0263A'>播出</b>時手機會亮紅框，"

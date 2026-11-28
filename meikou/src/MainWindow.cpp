@@ -398,7 +398,7 @@ QWidget *MainWindow::BuildTopBar()
 	layoutBtn_->setMenu(layoutMenu);
 	phoneBtn_ = new QPushButton(QStringLiteral("手機攝影機"));
 	phoneBtn_->setObjectName(QStringLiteral("flat"));
-	phoneBtn_->setToolTip(QStringLiteral("用 Meikou Live 手機版當無線攝影機：QR Code、連線狀態、Tally"));
+	phoneBtn_->setToolTip(QStringLiteral("用 Meikou Live Mobile 當無線攝影機：QR Code、連線狀態、Tally"));
 	connect(phoneBtn_, &QPushButton::clicked, this, [this] { ShowPhoneDialog(); });
 	h->addWidget(phoneBtn_);
 	h->addWidget(layoutBtn_);
@@ -578,7 +578,7 @@ QWidget *MainWindow::BuildSwitcher()
 		{"視窗擷取", "window"},
 		{"遊戲擷取", "game"},
 		{"網路影片（RTMP／SRT／RTSP／HLS／網址）", "url"},
-		{"手機攝影機（Meikou Live 手機版）", "phone"},
+		{"手機攝影機（Meikou Live Mobile）", "phone"},
 		{"影片／音樂檔案", "media"},
 		{"圖片", "image"},
 		{"純色", "color"},
