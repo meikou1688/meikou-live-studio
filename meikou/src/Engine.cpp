@@ -27,12 +27,15 @@ obs_scene_t *CreateCanvasScene(const std::string &name)
 }
 
 // 釋放場景前先從畫布移除：OBS 關閉時會先釋放畫布，背景執行緒才銷毀場景，
-// 不先移除的話場景會碰到已經釋放的畫布而當機
+// 不先移除的話場景會碰到已經釋放的畫布而當機。
+// 用 obs_source_remove 而不是 obs_canvas_scene_remove：前者同一個來源只會移除一次
+// （source->removed）。刪除場景時 RemoveInput 已經先 obs_source_remove 過同一個來源，
+// 再呼叫 obs_canvas_scene_remove 會把畫布持有的參照多釋放一次。
 void ReleaseCanvasScene(obs_scene_t *scene)
 {
 	if (!scene)
 		return;
-	obs_canvas_scene_remove(scene);
+	obs_source_remove(obs_scene_get_source(scene));
 	obs_scene_release(scene);
 }
 
