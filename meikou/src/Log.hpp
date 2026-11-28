@@ -9,5 +9,7 @@ namespace meikou {
 void InitLogging(const std::string &logDir);
 void ShutdownLogging();
 std::string CurrentLogPath();
+// 執行中出現幾次 OBS「即將淘汰」類的提醒（升級 OBS 前要是 0）
+int DeprecationWarningCount();
 
 } // namespace meikou

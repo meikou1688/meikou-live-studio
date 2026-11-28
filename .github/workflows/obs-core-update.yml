@@ -1,0 +1,203 @@
+name: OBS core update
+
+# 每週自動檢查 OBS 官方正式版（不跟 beta／rc）。有新版就：
+#   1. 開一個 obs-core-<版本> 分支，把 OBS 核心換成新版、更新「更新歷程」
+#   2. 在 Windows 與 Mac 編譯並跑完整自動巡檢（只編譯，不發布）
+#   3. 修正版（例如 33.0.3 → 33.0.4）巡檢全綠 → 自動合併並發布
+#      小改版／大改版（例如 33.0 → 33.1、34.0）→ 留下合併請求，等 Meikou 按「合併」才發布
+#   巡檢沒過 → 開一個問題單（Issue），不發布
+
+on:
+  schedule:
+    - cron: "23 2 * * 1" # 每週一 10:23（台灣時間）
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "指定 OBS 版本（例如 33.0.4）；空白＝最新正式版"
+        required: false
+        default: ""
+      wait_days:
+        description: "OBS 發布後至少等幾天再跟（常有緊急修正版）"
+        required: false
+        default: "7"
+
+permissions:
+  contents: write
+  pull-requests: write
+  actions: write
+  issues: write
+
+concurrency:
+  group: obs-core-update
+  cancel-in-progress: false
+
+jobs:
+  update:
+    name: Check and try the new OBS core
+    runs-on: ubuntu-latest
+    timeout-minutes: 330
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Find the newest stable OBS release
+        id: find
+        env:
+          FORCE_TAG: ${{ inputs.tag }}
+          WAIT_DAYS: ${{ inputs.wait_days || '7' }}
+        run: |
+          current=$(tr -d '[:space:]' < obs-version.txt)
+          if [ -n "$FORCE_TAG" ]; then
+            latest="$FORCE_TAG"
+          else
+            latest=$(git ls-remote --tags https://github.com/obsproject/obs-studio.git \
+              | sed -n 's#.*refs/tags/\([0-9][0-9]*\.[0-9][0-9]*\.[0-9][0-9]*\)$#\1#p' | sort -V | tail -1)
+          fi
+          echo "目前 OBS 核心：$current　OBS 最新正式版：$latest"
+          newer=$(printf '%s\n%s\n' "$current" "$latest" | sort -V | tail -1)
+          if [ -z "$latest" ] || [ "$latest" = "$current" ] || [ "$newer" != "$latest" ]; then
+            echo "已經是最新版，不用更新。" | tee -a "$GITHUB_STEP_SUMMARY"
+            echo "action=none" >> "$GITHUB_OUTPUT"; exit 0
+          fi
+          published=$(gh api "repos/obsproject/obs-studio/releases/tags/$latest" --jq .published_at 2>/dev/null || true)
+          if [ -z "$FORCE_TAG" ] && [ -n "$published" ]; then
+            age=$(( ( $(date +%s) - $(date -d "$published" +%s) ) / 86400 ))
+            if [ "$age" -lt "$WAIT_DAYS" ]; then
+              echo "OBS $latest 才發布 $age 天，等滿 $WAIT_DAYS 天再跟（常有緊急修正版）。" | tee -a "$GITHUB_STEP_SUMMARY"
+              echo "action=none" >> "$GITHUB_OUTPUT"; exit 0
+            fi
+          fi
+          branch="obs-core-$latest"
+          if git ls-remote --exit-code --heads origin "$branch" >/dev/null 2>&1; then
+            echo "分支 $branch 已經存在（之前試過），這次跳過。" | tee -a "$GITHUB_STEP_SUMMARY"
+            echo "action=none" >> "$GITHUB_OUTPUT"; exit 0
+          fi
+          if [ "$(echo "$current" | cut -d. -f1,2)" = "$(echo "$latest" | cut -d. -f1,2)" ]; then kind=patch; else kind=feature; fi
+          {
+            echo "action=update"
+            echo "current=$current"
+            echo "latest=$latest"
+            echo "branch=$branch"
+            echo "kind=$kind"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Switch the OBS core to the new version
+        if: steps.find.outputs.action == 'update'
+        env:
+          CURRENT: ${{ steps.find.outputs.current }}
+          LATEST: ${{ steps.find.outputs.latest }}
+          BRANCH: ${{ steps.find.outputs.branch }}
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898299+github-actions[bot]@users.noreply.github.com"
+          git checkout -b "$BRANCH"
+          git submodule update --init --depth 1 obs-studio
+          git -C obs-studio fetch -q --depth 1 origin "refs/tags/$LATEST:refs/tags/$LATEST"
+          git -C obs-studio checkout -q "$LATEST"
+          echo "$LATEST" > obs-version.txt
+          python3 tools/changelog.py obs meikou/resources/CHANGELOG.md "$LATEST"
+          python3 tools/changelog.py add meikou/resources/CHANGELOG.md \
+            "OBS 核心更新到 $LATEST（OBS 官方說明：https://github.com/obsproject/obs-studio/releases/tag/$LATEST）"
+          git add obs-studio obs-version.txt meikou/resources/CHANGELOG.md
+          git diff --cached --stat
+          git commit -q -m "OBS core $CURRENT -> $LATEST"
+          git push -q -u origin "$BRANCH"
+
+      - name: Open a merge request
+        id: pr
+        if: steps.find.outputs.action == 'update'
+        env:
+          CURRENT: ${{ steps.find.outputs.current }}
+          LATEST: ${{ steps.find.outputs.latest }}
+          BRANCH: ${{ steps.find.outputs.branch }}
+          KIND: ${{ steps.find.outputs.kind }}
+        run: |
+          if [ "$KIND" = patch ]; then
+            plan="這是修正版：Windows 與 Mac 巡檢全綠就會自動合併並發布，不用做什麼。"
+          else
+            plan="這是小改版／大改版：巡檢全綠後，請按下面的「Merge pull request」才會發布。"
+          fi
+          body="OBS 官方發布了 **$LATEST**（目前用的是 $CURRENT）。
+
+          - OBS 官方說明：https://github.com/obsproject/obs-studio/releases/tag/$LATEST
+          - $plan
+          - 編譯與自動巡檢結果會顯示在這裡。"
+          if url=$(gh pr create --base main --head "$BRANCH" --title "OBS 核心更新：$CURRENT → $LATEST" --body "$body" 2>&1); then
+            echo "pr=$url" >> "$GITHUB_OUTPUT"
+            echo "合併請求：$url" | tee -a "$GITHUB_STEP_SUMMARY"
+          else
+            # 倉庫設定沒開「允許 GitHub Actions 建立合併請求」時，改開問題單附上比較連結
+            echo "無法開合併請求：$url"
+            echo "pr=" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Build and self-test on Windows and Mac
+        id: build
+        if: steps.find.outputs.action == 'update'
+        env:
+          BRANCH: ${{ steps.find.outputs.branch }}
+        run: |
+          gh workflow run build.yml --ref "$BRANCH"
+          run=""
+          for i in $(seq 1 30); do
+            sleep 10
+            run=$(gh run list --workflow build.yml --branch "$BRANCH" --event workflow_dispatch --limit 1 --json databaseId --jq '.[0].databaseId')
+            [ -n "$run" ] && break
+          done
+          echo "編譯：https://github.com/$GH_REPO/actions/runs/$run" | tee -a "$GITHUB_STEP_SUMMARY"
+          gh run watch "$run" --interval 60 > /dev/null || true
+          gate=$(gh run view "$run" --json jobs --jq '.jobs[] | select(.name == "Self-test gate") | .conclusion')
+          echo "巡檢結果：$gate" | tee -a "$GITHUB_STEP_SUMMARY"
+          echo "run=$run" >> "$GITHUB_OUTPUT"
+          echo "gate=$gate" >> "$GITHUB_OUTPUT"
+
+      - name: Publish, or wait for Meikou, or report a problem
+        if: steps.find.outputs.action == 'update'
+        env:
+          CURRENT: ${{ steps.find.outputs.current }}
+          LATEST: ${{ steps.find.outputs.latest }}
+          BRANCH: ${{ steps.find.outputs.branch }}
+          KIND: ${{ steps.find.outputs.kind }}
+          PR: ${{ steps.pr.outputs.pr }}
+          RUN: ${{ steps.build.outputs.run }}
+          GATE: ${{ steps.build.outputs.gate }}
+        run: |
+          runurl="https://github.com/$GH_REPO/actions/runs/$RUN"
+          compare="https://github.com/$GH_REPO/compare/main...$BRANCH"
+          if [ "$GATE" != success ]; then
+            msg="OBS 核心 $CURRENT → $LATEST：編譯或自動巡檢沒有通過，暫不發布，需要調整程式。
+          - 編譯與巡檢紀錄：$runurl
+          - 變更內容：$compare"
+            [ -n "$PR" ] && gh pr comment "$PR" --body "$msg"
+            gh issue create --title "OBS 核心 $LATEST 需要調整" --body "$msg"
+            echo "$msg" >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+          if [ "$KIND" = patch ]; then
+            if [ -n "$PR" ]; then
+              gh pr merge "$PR" --squash --delete-branch
+            else
+              git fetch -q origin main
+              git checkout -q main && git pull -q origin main
+              git merge -q --no-edit "origin/$BRANCH" && git push -q origin main
+              git push -q origin --delete "$BRANCH"
+            fi
+            # 用 GitHub 內建權杖推上 main 不會自動觸發編譯，所以手動啟動發布
+            gh workflow run build.yml --ref main
+            echo "OBS 核心 $LATEST 巡檢全綠，已自動合併，正在發布新版。" | tee -a "$GITHUB_STEP_SUMMARY"
+          else
+            msg="OBS 核心 $CURRENT → $LATEST：Windows 與 Mac 編譯成功、自動巡檢全部通過 ✅
+          這是小改版／大改版，請確認後按「Merge pull request」，合併後會自動編譯並發布新版。
+          - 編譯與巡檢紀錄：$runurl"
+            if [ -n "$PR" ]; then
+              gh pr comment "$PR" --body "$msg"
+            else
+              gh issue create --title "OBS 核心 $LATEST 已通過巡檢，等待合併" --body "$msg
+          - 合併：$compare（按「Create pull request」再按「Merge」）"
+            fi
+            echo "$msg" >> "$GITHUB_STEP_SUMMARY"
+          fi

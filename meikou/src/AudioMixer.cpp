@@ -115,12 +115,11 @@ MixerStrip::MixerStrip(obs_source_t *source, const QString &name, bool followsVi
 	});
 
 	mute->setChecked(obs_source_muted(source_));
-	mon->setChecked(obs_source_get_monitoring_type(source_) != OBS_MONITORING_TYPE_NONE);
+	mon->setChecked(obs_source_get_monitoring_enabled(source_));
 	off->setChecked(!obs_source_enabled(source_));
 	connect(mute, &QPushButton::toggled, this, [this](bool on) { obs_source_set_muted(source_, on); });
 	connect(mon, &QPushButton::toggled, this, [this](bool on) {
-		obs_source_set_monitoring_type(source_, on ? OBS_MONITORING_TYPE_MONITOR_AND_OUTPUT
-							   : OBS_MONITORING_TYPE_NONE);
+		obs_source_set_monitoring_enabled(source_, on);
 	});
 	connect(off, &QPushButton::toggled, this, [this, slider, mute, mon](bool on) {
 		obs_source_set_enabled(source_, !on);

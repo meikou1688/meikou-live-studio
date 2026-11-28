@@ -17,6 +17,17 @@
 
 namespace meikou {
 
+// OBS 31 起場景要放在「畫布」上；建在主畫布（內部名稱唯一，不會出現在任何清單）
+obs_scene_t *CreateCanvasScene(const std::string &name)
+{
+	obs_canvas_t *main = obs_get_main_canvas();
+	obs_scene_t *scene = main ? obs_canvas_scene_create(main, name.c_str()) : nullptr;
+	obs_canvas_release(main);
+	return scene;
+}
+
+
+
 namespace {
 
 const char *kSafeModules[] = {
@@ -229,7 +240,7 @@ bool Engine::Startup(const std::string &configDir, int fpsNum, int fpsDen, std::
 
 	obs_set_audio_monitoring_device("Default", "default");
 
-	black_ = obs_scene_create_private("Meikou Black");
+	black_ = CreateCanvasScene("Meikou Black");
 	transition_ = obs_source_create_private(transitionType_.c_str(), "Meikou Transition", nullptr);
 	if (!transition_) {
 		transitionType_ = "cut_transition";
@@ -238,8 +249,8 @@ bool Engine::Startup(const std::string &configDir, int fpsNum, int fpsDen, std::
 	obs_transition_set(transition_, obs_scene_get_source(black_));
 	obs_set_output_source(0, transition_);
 
-	pvwOverlay_ = obs_scene_create_private("Meikou PVW Overlay");
-	pgmOverlay_ = obs_scene_create_private("Meikou PGM Overlay");
+	pvwOverlay_ = CreateCanvasScene("Meikou PVW Overlay");
+	pgmOverlay_ = CreateCanvasScene("Meikou PGM Overlay");
 	obs_set_output_source(kOverlayChannel, obs_scene_get_source(pgmOverlay_));
 	// 預覽疊加場景不在輸出上，手動標成「顯示中」讓內容持續更新
 	obs_source_inc_showing(obs_scene_get_source(pvwOverlay_));
@@ -426,7 +437,7 @@ Input *Engine::AddInput(const std::string &typeId, const std::string &name, obs_
 		if (in->channel)
 			obs_set_output_source(in->channel, src);
 	} else {
-		in->wrap = obs_scene_create_private(("IN:" + in->uid).c_str());
+		in->wrap = CreateCanvasScene(("IN:" + in->uid).c_str());
 		obs_sceneitem_t *item = obs_scene_add(in->wrap, src);
 		FitToCanvas(item);
 	}
@@ -545,7 +556,7 @@ Input *Engine::CreateScene(const std::string &name, const std::string &uid)
 	in->name = name;
 	in->typeId = "scene";
 	in->isScene = true;
-	in->wrap = obs_scene_create_private(("SC:" + in->uid).c_str());
+	in->wrap = CreateCanvasScene(("SC:" + in->uid).c_str());
 	if (!in->wrap)
 		return nullptr;
 	in->source = obs_source_get_ref(obs_scene_get_source(in->wrap));
@@ -1791,8 +1802,7 @@ std::string Engine::SaveProjectJson() const
 		obs_data_release(st);
 		obs_data_set_bool(d, "muted", obs_source_muted(in->source));
 		obs_data_set_double(d, "volume", obs_source_get_volume(in->source));
-		obs_data_set_bool(d, "monitor",
-				  obs_source_get_monitoring_type(in->source) != OBS_MONITORING_TYPE_NONE);
+		obs_data_set_bool(d, "monitor", obs_source_get_monitoring_enabled(in->source));
 		obs_data_set_bool(d, "enabled", obs_source_enabled(in->source));
 		obs_data_array_push_back(ins, d);
 		obs_data_release(d);
@@ -1891,8 +1901,7 @@ void Engine::LoadProjectJson(const std::string &json)
 					if (obs_data_has_user_value(d, "volume"))
 						obs_source_set_volume(in->source, (float)obs_data_get_double(d, "volume"));
 					if (obs_data_get_bool(d, "monitor"))
-						obs_source_set_monitoring_type(in->source,
-									       OBS_MONITORING_TYPE_MONITOR_AND_OUTPUT);
+						obs_source_set_monitoring_enabled(in->source, true);
 					if (obs_data_has_user_value(d, "enabled") && !obs_data_get_bool(d, "enabled"))
 						obs_source_set_enabled(in->source, false);
 					if (in->wrap && layers && obs_data_array_count(layers) == 1) {

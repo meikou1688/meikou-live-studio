@@ -6,6 +6,8 @@ on:
     paths-ignore:
       - "docs/**"
       - "**.md"
+  pull_request:
+    branches: [main]
   workflow_dispatch:
 
 concurrency:
@@ -18,7 +20,7 @@ permissions:
 env:
   MEIKOU_VERSION: 2.0.0-m2.${{ github.run_number }}
   MEIKOU_VIVERSION: 2.0.0.${{ github.run_number }}
-  OBS_TAG: 33.0.3
+  # OBS 核心版本寫在 obs-version.txt（自動更新流程會改它）
 
 jobs:
   windows:
@@ -36,6 +38,11 @@ jobs:
           submodules: recursive
           fetch-depth: 1
 
+      - name: OBS version and changelog heading
+        run: |
+          $tag = (Get-Content obs-version.txt -Raw).Trim()
+          "OBS_TAG=$tag" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+          python tools/changelog.py stamp meikou/resources/CHANGELOG.md
       - name: Fetch OBS version tag (git describe needs it)
         run: git -C obs-studio fetch --depth=1 origin "refs/tags/${env:OBS_TAG}:refs/tags/${env:OBS_TAG}"
 
@@ -156,6 +163,10 @@ jobs:
           submodules: recursive
           fetch-depth: 1
 
+      - name: OBS version and changelog heading
+        run: |
+          echo "OBS_TAG=$(tr -d '[:space:]' < obs-version.txt)" >> "$GITHUB_ENV"
+          python3 tools/changelog.py stamp meikou/resources/CHANGELOG.md
       - name: Fetch OBS version tag (git describe needs it)
         run: git -C obs-studio fetch --depth=1 origin "refs/tags/${OBS_TAG}:refs/tags/${OBS_TAG}"
 
@@ -269,10 +280,42 @@ jobs:
           path: selftest/*
           retention-days: 14
 
+  gate:
+    # 兩個平台都編譯成功、自動巡檢 0 項失敗才算通過（OBS 核心自動更新靠這一關決定能不能發布）
+    name: Self-test gate
+    needs: [windows, macos]
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        continue-on-error: true
+        with:
+          pattern: selftest-*
+          path: selftest
+      - name: Check both reports
+        env:
+          WIN: ${{ needs.windows.result }}
+          MAC: ${{ needs.macos.result }}
+        run: |
+          python3 - <<'PY'
+          import json, os, sys
+          ok = os.environ["WIN"] == "success" and os.environ["MAC"] == "success"
+          for name in ("selftest-windows", "selftest-macos"):
+              try:
+                  r = json.load(open(f"selftest/{name}/report.json", encoding="utf-8"))
+                  print(f"{name}: {r['passed']} passed, {r['failed']} failed, {r['warnings']} warnings")
+                  ok = ok and r["failed"] == 0 and r["passed"] > 50
+              except Exception as e:
+                  print(f"{name}: no report ({e})")
+                  ok = False
+          sys.exit(0 if ok else 1)
+          PY
+
   release:
     name: Publish pre-release
     needs: [windows, macos]
-    if: ${{ always() && (needs.windows.result == 'success' || needs.macos.result == 'success') }}
+    # 只有 main 分支發布；試編分支（例如 OBS 核心更新）只編譯與巡檢
+    if: ${{ always() && github.ref == 'refs/heads/main' && github.event_name != 'pull_request' && (needs.windows.result == 'success' || needs.macos.result == 'success') }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -296,6 +339,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
         run: |
+          python3 tools/changelog.py stamp meikou/resources/CHANGELOG.md
           ls -la dist
           summary=$(python3 - <<'PY'
           import json, glob, os
@@ -345,3 +389,13 @@ jobs:
           done
           gh release create "v${MEIKOU_VERSION}" dist/* --prerelease \
             --title "Meikou Live Studio ${MEIKOU_VERSION}" --notes "$notes" --target "${GITHUB_SHA}"
+      - name: Write the version number into the changelog
+        # 「## 下一版」改成這一版的版號，寫回 main（.md 變更不會觸發編譯）
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898299+github-actions[bot]@users.noreply.github.com"
+          if ! git diff --quiet -- meikou/resources/CHANGELOG.md; then
+            git add meikou/resources/CHANGELOG.md
+            git commit -m "Changelog: ${MEIKOU_VERSION} [skip ci]"
+            for i in 1 2 3; do git pull --rebase -q origin main && git push -q origin HEAD:main && break; sleep 5; done
+          fi

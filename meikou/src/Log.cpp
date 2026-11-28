@@ -1,3 +1,5 @@
+#include <cstring>
+#include <atomic>
 #include "Log.hpp"
 
 #include <util/base.h>
@@ -58,12 +60,17 @@ const char *LevelName(int level)
 	}
 }
 
+std::atomic<int> g_deprecationWarnings{0};
+
 void LogHandler(int level, const char *format, va_list args, void *)
 {
 	char message[8192];
 	va_list copy;
 	va_copy(copy, args);
 	vsnprintf(message, sizeof(message), format, copy);
+	// OBS 提醒「即將淘汰」或「場景沒指定畫布」：自我檢查會確認這個數字是 0
+	if (std::strstr(message, " is deprecated") || std::strstr(message, "without specifying a canvas"))
+		g_deprecationWarnings.fetch_add(1);
 	va_end(copy);
 
 #ifndef _DEBUG
@@ -130,6 +137,11 @@ void ShutdownLogging()
 	std::lock_guard<std::mutex> lock(g_mutex);
 	if (g_file.is_open())
 		g_file.close();
+}
+
+int DeprecationWarningCount()
+{
+	return g_deprecationWarnings.load();
 }
 
 std::string CurrentLogPath()

@@ -773,6 +773,10 @@ int RunSelfTest(QApplication &app, const QString &configDir, const QString &repo
 		}
 	}
 
+	rep.Section(QStringLiteral("OBS 核心相容性"));
+	rep.Check(QStringLiteral("沒有使用 OBS 即將淘汰的功能（升級 OBS 新版時比較順）"), DeprecationWarningCount() == 0,
+		  QStringLiteral("OBS 核心 %1，提醒 %2 次").arg(QString::fromUtf8(obs_get_version_string())).arg(DeprecationWarningCount()));
+
 	rep.Section(QStringLiteral("專案存檔"));
 	const QByteArray json = QByteArray::fromStdString(engine.SaveProjectJson());
 	QJsonParseError pe;
