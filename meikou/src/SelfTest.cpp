@@ -1234,6 +1234,18 @@ int RunSelfTest(QApplication &app, const QString &configDir, const QString &repo
 			engine.SetPreview(phone);
 			rep.Check(QStringLiteral("Tally：放到預覽 → 綠框（pvw）"),
 				  waitFor([&] { readTally(); return tally == QLatin1String("pvw"); }, 3000), tally);
+			{
+				// 「手機攝影機」視窗：手機已連線、在預覽中
+				PhoneDialog dlg(engine, link, nullptr, phone->uid);
+				dlg.show();
+				pump(600);
+				const QImage di = dlg.grab().toImage();
+				if (!shotsDir.isEmpty())
+					di.save(QDir(shotsDir).filePath(QStringLiteral("phone-dialog.png")));
+				rep.Check(QStringLiteral("手機攝影機視窗（QR Code、連線狀態）"), !di.isNull() && di.width() >= 700,
+					  QStringLiteral("%1×%2").arg(di.width()).arg(di.height()));
+				dlg.close();
+			}
 			engine.Cut();
 			rep.Check(QStringLiteral("Tally：送出到播出 → 紅框（pgm）"),
 				  waitFor([&] { readTally(); return tally == QLatin1String("pgm"); }, 3000), tally);
