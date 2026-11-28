@@ -33,7 +33,7 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
           submodules: recursive
           fetch-depth: 1
@@ -47,7 +47,7 @@ jobs:
         run: git -C obs-studio fetch --depth=1 origin "refs/tags/${env:OBS_TAG}:refs/tags/${env:OBS_TAG}"
 
       - name: Restore OBS dependencies
-        uses: actions/cache@v4
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
         with:
           path: obs-studio/.deps
           key: obs-deps-windows-x64-${{ hashFiles('obs-studio/CMakePresets.json') }}
@@ -114,7 +114,7 @@ jobs:
           Get-ChildItem out | Format-Table Name, Length
 
       - name: Upload
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: windows
           path: out/*
@@ -140,7 +140,7 @@ jobs:
 
       - name: Upload self test
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: selftest-windows
           path: selftest/*
@@ -158,7 +158,7 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
           submodules: recursive
           fetch-depth: 1
@@ -177,7 +177,7 @@ jobs:
           xcodebuild -version
 
       - name: Restore OBS dependencies
-        uses: actions/cache@v4
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
         with:
           path: obs-studio/.deps
           key: obs-deps-macos-arm64-${{ hashFiles('obs-studio/CMakePresets.json', 'obs-studio/buildspec.json') }}
@@ -245,7 +245,7 @@ jobs:
           ls -la out
 
       - name: Upload
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: macos
           path: out/*
@@ -274,7 +274,7 @@ jobs:
 
       - name: Upload self test
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: selftest-macos
           path: selftest/*
@@ -287,7 +287,7 @@ jobs:
     if: always()
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         continue-on-error: true
         with:
           pattern: selftest-*
@@ -324,18 +324,18 @@ jobs:
     if: ${{ always() && github.ref == 'refs/heads/main' && github.event_name != 'pull_request' && (needs.windows.result == 'success' || needs.macos.result == 'success') }}
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
           sparse-checkout: |
             tools
             meikou/resources/CHANGELOG.md
           sparse-checkout-cone-mode: false
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with:
           pattern: "{windows,macos}"
           path: dist
           merge-multiple: true
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         continue-on-error: true
         with:
           pattern: selftest-*
