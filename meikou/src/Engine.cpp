@@ -26,6 +26,16 @@ obs_scene_t *CreateCanvasScene(const std::string &name)
 	return scene;
 }
 
+// 釋放場景前先從畫布移除：OBS 關閉時會先釋放畫布，背景執行緒才銷毀場景，
+// 不先移除的話場景會碰到已經釋放的畫布而當機
+void ReleaseCanvasScene(obs_scene_t *scene)
+{
+	if (!scene)
+		return;
+	obs_canvas_scene_remove(scene);
+	obs_scene_release(scene);
+}
+
 
 
 namespace {
@@ -347,7 +357,7 @@ void Engine::Shutdown()
 
 	for (auto &in : inputs_) {
 		if (in->wrap)
-			obs_scene_release(in->wrap);
+			ReleaseCanvasScene(in->wrap);
 		if (in->source)
 			obs_source_release(in->source);
 	}
@@ -355,11 +365,11 @@ void Engine::Shutdown()
 
 	if (pvwOverlay_) {
 		obs_source_dec_showing(obs_scene_get_source(pvwOverlay_));
-		obs_scene_release(pvwOverlay_);
+		ReleaseCanvasScene(pvwOverlay_);
 		pvwOverlay_ = nullptr;
 	}
 	if (pgmOverlay_) {
-		obs_scene_release(pgmOverlay_);
+		ReleaseCanvasScene(pgmOverlay_);
 		pgmOverlay_ = nullptr;
 	}
 	if (transition_) {
@@ -367,7 +377,7 @@ void Engine::Shutdown()
 		transition_ = nullptr;
 	}
 	if (black_) {
-		obs_scene_release(black_);
+		ReleaseCanvasScene(black_);
 		black_ = nullptr;
 	}
 	if (cpu_) {
@@ -469,7 +479,7 @@ void Engine::RemoveInput(const std::string &uid)
 
 	obs_source_remove(in->source);
 	if (in->wrap)
-		obs_scene_release(in->wrap);
+		ReleaseCanvasScene(in->wrap);
 	obs_source_release(in->source);
 	inputs_.erase(it);
 }
