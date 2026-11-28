@@ -10,6 +10,11 @@ import os
 import re
 import sys
 
+# Windows 的主控台預設不是 UTF-8，印中文會出錯
+for stream in (sys.stdout, sys.stderr):
+    if hasattr(stream, "reconfigure"):
+        stream.reconfigure(encoding="utf-8", errors="replace")
+
 NEXT = "## 下一版"
 
 

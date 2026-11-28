@@ -1,6 +1,7 @@
 // 自動巡檢：meikou-live-studio --selftest --report <json> [--shots <資料夾>] [--rtmp <網址>]
 // 不開主畫面也能逐項檢查引擎功能，最後再開主視窗截圖。結果寫成 JSON，結束代碼＝失敗項目數。
 #include "SelfTest.hpp"
+#include "Display.hpp"
 #include "Updater.hpp"
 #include "NetMedia.hpp"
 #include "MediaControl.hpp"
@@ -344,6 +345,13 @@ int RunSelfTest(QApplication &app, const QString &configDir, const QString &repo
 	const bool pipOk = pip.layerId != 0 && engine.TargetRect(pip, r0) && (r0.x1 - r0.x0) < 1000;
 	rep.Check(QStringLiteral("子母畫面在右下角、可以點選"), pipOk, RectText(r0));
 	EditTarget baseLayer = engine.HitPreview(200, 200);
+	{
+		// 子母畫面底下還有主畫面：同一點可以依序選到兩層
+		const auto stack = engine.HitPreviewAll(1500, 860);
+		rep.Check(QStringLiteral("疊在一起的圖層都點得到（上層→下層）"),
+			  stack.size() >= 2 && stack.front() == pip && stack.back() == baseLayer,
+			  QStringLiteral("這一點有 %1 層").arg(stack.size()));
+	}
 	rep.Check(QStringLiteral("填滿畫面的底圖鎖定，不會被誤拖"), baseLayer.Valid() && engine.IsLocked(baseLayer));
 
 	engine.MoveTarget(pip, -300, -200);
@@ -1086,6 +1094,36 @@ int RunSelfTest(QApplication &app, const QString &configDir, const QString &repo
 					10000);
 				rep.Check(QStringLiteral("影片放在預覽就開始播放"), playing,
 					  QStringLiteral("%1×%2").arg(obs_source_get_width(src)).arg(obs_source_get_height(src)));
+				{
+					// 選到畫面外的圖層：預覽自動放大範圍，把圖層和邊框一起顯示出來
+					Display *pd = nullptr;
+					for (Display *d : window->findChildren<Display *>())
+						if (d->IsPreview())
+							pd = d;
+					const auto ls = engine.SceneLayers(mscene);
+					bool viewOk = false;
+					QString detail = QStringLiteral("找不到預覽視窗或圖層");
+					if (pd && !ls.empty()) {
+						const EditTarget lt{std::string(), ls.front().id};
+						engine.SetSelection(lt);
+						engine.MoveTarget(lt, 2600.0f, 0.0f);
+						pump(300);
+						CanvasRect r;
+						engine.TargetRect(lt, r);
+						const QRectF v = pd->CurrentView();
+						viewOk = v.contains(QRectF(QPointF(r.x0, r.y0), QPointF(r.x1, r.y1))) &&
+							 v.contains(QRectF(0, 0, 1920, 1080));
+						detail = QStringLiteral("圖層 %1～%2，顯示範圍 %3～%4")
+								 .arg(r.x0, 0, 'f', 0)
+								 .arg(r.x1, 0, 'f', 0)
+								 .arg(v.left(), 0, 'f', 0)
+								 .arg(v.right(), 0, 'f', 0);
+						engine.MoveTarget(lt, -2600.0f, 0.0f);
+						engine.SetSelection(EditTarget());
+						pump(200);
+					}
+					rep.Check(QStringLiteral("選到畫面外的圖層時，預覽自動放大範圍顯示邊框"), viewOk, detail);
+				}
 				pump(2500);
 				obs_source_media_play_pause(src, true);
 				pump(500);

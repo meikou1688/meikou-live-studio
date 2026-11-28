@@ -298,16 +298,22 @@ jobs:
           MAC: ${{ needs.macos.result }}
         run: |
           python3 - <<'PY'
-          import json, os, sys
+          import glob, json, os, sys
+          # 只下載到一個報告時，檔案會直接放在 selftest/ 底下（沒有子資料夾），所以到處找
           ok = os.environ["WIN"] == "success" and os.environ["MAC"] == "success"
-          for name in ("selftest-windows", "selftest-macos"):
-              try:
-                  r = json.load(open(f"selftest/{name}/report.json", encoding="utf-8"))
-                  print(f"{name}: {r['passed']} passed, {r['failed']} failed, {r['warnings']} warnings")
-                  ok = ok and r["failed"] == 0 and r["passed"] > 50
-              except Exception as e:
-                  print(f"{name}: no report ({e})")
-                  ok = False
+          found = {}
+          for path in glob.glob("selftest/**/report.json", recursive=True):
+              r = json.load(open(path, encoding="utf-8"))
+              text = (path + " " + str(r.get("platform", ""))).lower()
+              key = "windows" if "windows" in text else "macos"
+              found[key] = r
+          for key in ("windows", "macos"):
+              r = found.get(key)
+              if not r:
+                  print(f"{key}: no report"); ok = False; continue
+              print(f"{key}: {r['passed']} passed, {r['failed']} failed, {r['warnings']} warnings")
+              ok = ok and r["failed"] == 0 and r["passed"] > 50
+          print("gate:", "pass" if ok else "fail")
           sys.exit(0 if ok else 1)
           PY
 
@@ -344,10 +350,16 @@ jobs:
           summary=$(python3 - <<'PY'
           import json, glob, os
           lines = []
+          # 報告可能在 selftest/selftest-<平台>/ 或直接在 selftest/（只有一份時）
+          where = {}
+          for path in glob.glob("selftest/**/report.json", recursive=True):
+              plat = str(json.load(open(path, encoding="utf-8")).get("platform", "")).lower()
+              where["selftest-windows" if ("windows" in path.lower() or "windows" in plat) else "selftest-macos"] = os.path.dirname(path)
           for name, label in (("selftest-windows", "Windows"), ("selftest-macos", "macOS")):
               try:
-                  r = json.load(open(f"selftest/{name}/report.json", encoding="utf-8"))
-                  s = json.load(open(f"selftest/{name}/rtmp_sink.json", encoding="utf-8")) if os.path.exists(f"selftest/{name}/rtmp_sink.json") else {}
+                  d = where[name]
+                  r = json.load(open(f"{d}/report.json", encoding="utf-8"))
+                  s = json.load(open(f"{d}/rtmp_sink.json", encoding="utf-8")) if os.path.exists(f"{d}/rtmp_sink.json") else {}
                   rtmp = f"，RTMP 收到 {s.get('video_packets',0)} 個影像封包／{s.get('audio_packets',0)} 個聲音封包" if s else ""
                   lines.append(f"- {label} 自動巡檢：{r['passed']} 項通過、{r['failed']} 項失敗、{r['warnings']} 項提醒{rtmp}")
               except Exception as e:
@@ -387,6 +399,11 @@ jobs:
             n=$(basename "$d" | sed 's/selftest-//')
             (cd "$d" && zip -qr "../../dist/SelfTest-${n}.zip" .)
           done
+          # 只有一份報告時檔案直接在 selftest/ 底下
+          if [ -f selftest/report.json ]; then
+            if grep -qi '"platform": *"[^"]*windows' selftest/report.json; then n=windows; else n=macos; fi
+            (cd selftest && zip -qr "../dist/SelfTest-${n}.zip" . -x 'selftest-*')
+          fi
           gh release create "v${MEIKOU_VERSION}" dist/* --prerelease \
             --title "Meikou Live Studio ${MEIKOU_VERSION}" --notes "$notes" --target "${GITHUB_SHA}"
       - name: Write the version number into the changelog

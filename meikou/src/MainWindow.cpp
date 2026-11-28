@@ -426,6 +426,7 @@ QWidget *MainWindow::BuildSwitcher()
 	pvwTitle->setObjectName(QStringLiteral("pvwTitle"));
 	pvwDisplay_ = new Display(engine_, Display::Mode::Preview);
 	pvwDisplay_->onOverlayChanged = [this] { ScheduleSave(); };
+	pvwDisplay_->onSelectionChanged = [this] { RefreshBusState(); };
 	pvwDisplay_->onLayersChanged = [this] {
 		rowSig_.clear();
 		RefreshBusState();
@@ -939,6 +940,9 @@ void MainWindow::ToggleLayer(int64_t layerId)
 	if (!sc)
 		return;
 	engine_.SetLayerVisible(sc, layerId, !engine_.LayerVisible(sc, layerId));
+	// 同時在預覽框出這一層（就算被上面的圖層擋住、或放在畫面外；隱藏中的用虛線框）
+	if (engine_.Preview() == sc)
+		engine_.SetSelection(EditTarget{std::string(), layerId});
 	RefreshBusState();
 	ScheduleSave();
 }
@@ -1211,6 +1215,11 @@ void MainWindow::RefreshBusState()
 			if (!b)
 				continue;
 			const int64_t id = b->property("layer").toLongLong();
+			const bool selected = engine_.Preview() == cur && engine_.Selection() == EditTarget{std::string(), id};
+			if (b->property("selected").toBool() != selected) {
+				b->setProperty("selected", selected);
+				Repolish(b);
+			}
 			QString state;
 			if (engine_.LayerVisible(cur, id))
 				state = live ? QStringLiteral("pgm") : QStringLiteral("pvw");

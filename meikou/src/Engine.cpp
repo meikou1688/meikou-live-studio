@@ -873,8 +873,7 @@ bool Engine::SetTransitionType(const std::string &typeId)
 void Engine::RenderPreview(float handleSize)
 {
 	obs_source_t *src = nullptr;
-	bool haveBox = false;
-	struct matrix4 box;
+	bool haveBox = false, selHidden = false;
 	CanvasRect rect;
 	{
 		std::lock_guard<std::mutex> lock(previewMutex_);
@@ -889,8 +888,8 @@ void Engine::RenderPreview(float handleSize)
 			sel = obs_scene_find_sceneitem_by_id(pvw_->wrap, selection_.layerId);
 		}
 		if (sel) {
-			obs_sceneitem_get_box_transform(sel, &box);
 			rect = ItemRect(sel);
+			selHidden = !obs_sceneitem_visible(sel);
 			haveBox = true;
 		}
 	}
@@ -906,33 +905,48 @@ void Engine::RenderPreview(float handleSize)
 	gs_effect_t *solid = obs_get_base_effect(OBS_EFFECT_SOLID);
 	gs_eparam_t *color = gs_effect_get_param_by_name(solid, "color");
 	struct vec4 c;
-	vec4_set(&c, 1.0f, 0.79f, 0.25f, 1.0f); // 選取框用黃色，和蒂芬尼藍的畫面邊框區分
+	// 選取框用黃色（和蒂芬尼藍的畫面邊框區分）；隱藏中的圖層用淡黃虛線
+	if (selHidden)
+		vec4_set(&c, 1.0f, 0.86f, 0.55f, 0.85f);
+	else
+		vec4_set(&c, 1.0f, 0.79f, 0.25f, 1.0f);
 	gs_effect_set_vec4(color, &c);
-	while (gs_effect_loop(solid, "Solid")) {
-		// 外框
-		gs_matrix_push();
-		gs_matrix_mul(&box);
+	const float t = std::max(1.0f, handleSize * 0.25f); // 框線約 2～3 個實際像素
+	auto quad = [](float x0, float y0, float x1, float y1) {
 		gs_render_start(true);
-		gs_vertex2f(0.0f, 0.0f);
-		gs_vertex2f(1.0f, 0.0f);
-		gs_vertex2f(1.0f, 1.0f);
-		gs_vertex2f(0.0f, 1.0f);
-		gs_vertex2f(0.0f, 0.0f);
-		gs_render_stop(GS_LINESTRIP);
-		gs_matrix_pop();
+		gs_vertex2f(x0, y0);
+		gs_vertex2f(x1, y0);
+		gs_vertex2f(x0, y1);
+		gs_vertex2f(x1, y1);
+		gs_render_stop(GS_TRISTRIP);
+	};
+	// 一條邊：實線，或隱藏時的虛線
+	auto edge = [&](float x0, float y0, float x1, float y1, bool horizontal) {
+		if (!selHidden) {
+			quad(x0, y0, x1, y1);
+			return;
+		}
+		const float dash = handleSize * 1.2f, gap = handleSize * 0.8f;
+		if (horizontal)
+			for (float x = x0; x < x1; x += dash + gap)
+				quad(x, y0, std::min(x + dash, x1), y1);
+		else
+			for (float y = y0; y < y1; y += dash + gap)
+				quad(x0, y, x1, std::min(y + dash, y1));
+	};
+	while (gs_effect_loop(solid, "Solid")) {
+		// 外框（畫在圖層邊緣外側，就算圖層在畫面外也看得到）
+		edge(rect.x0 - t, rect.y0 - t, rect.x1 + t, rect.y0, true);
+		edge(rect.x0 - t, rect.y1, rect.x1 + t, rect.y1 + t, true);
+		edge(rect.x0 - t, rect.y0, rect.x0, rect.y1, false);
+		edge(rect.x1, rect.y0, rect.x1 + t, rect.y1, false);
 
 		// 四個角的縮放控制點
 		const float h = handleSize * 0.5f;
 		const float cx[4] = {rect.x0, rect.x1, rect.x1, rect.x0};
 		const float cy[4] = {rect.y0, rect.y0, rect.y1, rect.y1};
-		for (int i = 0; i < 4; i++) {
-			gs_render_start(true);
-			gs_vertex2f(cx[i] - h, cy[i] - h);
-			gs_vertex2f(cx[i] + h, cy[i] - h);
-			gs_vertex2f(cx[i] - h, cy[i] + h);
-			gs_vertex2f(cx[i] + h, cy[i] + h);
-			gs_render_stop(GS_TRISTRIP);
-		}
+		for (int i = 0; i < 4; i++)
+			quad(cx[i] - h, cy[i] - h, cx[i] + h, cy[i] + h);
 	}
 }
 
@@ -951,6 +965,25 @@ std::vector<obs_sceneitem_t *> Engine::TargetItems(const EditTarget &t)
 			items.push_back(item);
 	}
 	return items;
+}
+
+// 游標底下所有看得到的圖層（最上層在前）；在同一點連續點選可以依序選到下面的圖層
+std::vector<EditTarget> Engine::HitPreviewAll(float x, float y)
+{
+	std::vector<EditTarget> hits;
+	auto inside = [x, y](const CanvasRect &r) { return x >= r.x0 && x <= r.x1 && y >= r.y0 && y <= r.y1; };
+	for (auto it = overlays_.rbegin(); it != overlays_.rend(); ++it) {
+		Overlay *ov = it->get();
+		if (ov->state == OverlayState::Preview && inside(ItemRect(ov->pvwItem)))
+			hits.push_back({ov->uid, 0});
+	}
+	if (pvw_ && pvw_->wrap) {
+		auto items = SceneItems(pvw_->wrap);
+		for (auto it = items.rbegin(); it != items.rend(); ++it)
+			if (obs_sceneitem_visible(*it) && inside(ItemRect(*it)))
+				hits.push_back({std::string(), obs_sceneitem_get_id(*it)});
+	}
+	return hits;
 }
 
 EditTarget Engine::HitPreview(float x, float y)

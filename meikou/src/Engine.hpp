@@ -170,6 +170,7 @@ public:
 
 	// ---------- 預覽畫面裡的編輯（座標都是 1920×1080） ----------
 	EditTarget HitPreview(float x, float y);
+	std::vector<EditTarget> HitPreviewAll(float x, float y);
 	bool TargetRect(const EditTarget &t, CanvasRect &r);
 	bool IsLocked(const EditTarget &t); // 填滿整個畫面的圖層不能直接拖動，避免誤觸
 	void MoveTarget(const EditTarget &t, float dx, float dy);

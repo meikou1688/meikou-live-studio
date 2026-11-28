@@ -90,21 +90,58 @@ void Display::resizeEvent(QResizeEvent *event)
 
 void Display::paintEvent(QPaintEvent *) {}
 
+QRectF Display::ComputeView() const
+{
+	const QRectF canvas(0, 0, 1920, 1080);
+	if (mode_ != Mode::Preview)
+		return canvas;
+	const EditTarget sel = engine_.Selection();
+	CanvasRect r;
+	if (!sel.Valid() || !engine_.TargetRect(sel, r))
+		return canvas;
+	const QRectF item(QPointF(std::min(r.x0, r.x1), std::min(r.y0, r.y1)),
+			  QPointF(std::max(r.x0, r.x1), std::max(r.y0, r.y1)));
+	if (canvas.contains(item))
+		return canvas;
+	// 圖層有一部分在畫面外：把畫面和圖層一起放進來，四周留一點空間
+	QRectF u = canvas.united(item);
+	const double maxSpan = 1920.0 * 12; // 太遠的話最多縮到 12 倍
+	if (u.width() > maxSpan || u.height() > maxSpan * 9 / 16)
+		u = u.intersected(QRectF(-maxSpan / 2, -maxSpan * 9 / 32, maxSpan + 1920, maxSpan * 9 / 16 + 1080));
+	const double m = std::max(u.width(), u.height()) * 0.04;
+	return u.adjusted(-m, -m, m, m);
+}
+
+QRectF Display::ViewRect() const
+{
+	std::lock_guard<std::mutex> lock(viewMutex_);
+	return viewFrozen_ ? frozenView_ : ComputeView();
+}
+
+void Display::Mapping(float pixelW, float pixelH, float &scale, float &left, float &top) const
+{
+	const QRectF v = ViewRect();
+	scale = std::min(pixelW / (float)v.width(), pixelH / (float)v.height());
+	if (scale <= 0.0f)
+		scale = 1.0f;
+	left = (float)v.x() - (pixelW - (float)v.width() * scale) / 2.0f / scale;
+	top = (float)v.y() - (pixelH - (float)v.height() * scale) / 2.0f / scale;
+}
+
 bool Display::ToCanvas(const QPointF &p, float &x, float &y) const
 {
-	const float cw = 1920.0f, ch = 1080.0f;
-	const float w = (float)width(), h = (float)height();
-	const float scale = std::min(w / cw, h / ch);
-	const float ox = (w - cw * scale) / 2.0f, oy = (h - ch * scale) / 2.0f;
-	x = ((float)p.x() - ox) / scale;
-	y = ((float)p.y() - oy) / scale;
-	return x >= 0 && y >= 0 && x <= cw && y <= ch;
+	float scale, left, top;
+	Mapping((float)width(), (float)height(), scale, left, top);
+	x = left + (float)p.x() / scale;
+	y = top + (float)p.y() / scale;
+	return x >= 0 && y >= 0 && x <= 1920.0f && y <= 1080.0f;
 }
 
 float Display::CanvasPerPixel() const
 {
-	const float scale = std::min((float)width() / 1920.0f, (float)height() / 1080.0f);
-	return scale > 0.0f ? 1.0f / scale : 1.0f;
+	float scale, left, top;
+	Mapping((float)width(), (float)height(), scale, left, top);
+	return 1.0f / scale;
 }
 
 int Display::HitHandle(float x, float y) const
@@ -141,16 +178,36 @@ void Display::mousePressEvent(QMouseEvent *event)
 
 	lastX_ = x;
 	lastY_ = y;
+	pressX_ = x;
+	pressY_ = y;
 	dragged_ = false;
+	cycleOnRelease_ = false;
+	{
+		// 拖曳期間固定顯示範圍
+		std::lock_guard<std::mutex> lock(viewMutex_);
+		frozenView_ = ComputeView();
+		viewFrozen_ = true;
+	}
 	dragCorner_ = HitHandle(x, y);
 	if (dragCorner_ >= 0) {
 		drag_ = engine_.Selection();
 		return;
 	}
-	EditTarget t = engine_.HitPreview(x, y);
+	// 點在目前選取的圖層上：先保留（可以直接拖曳）；放開時沒拖動，就改選它下面的那一層
+	const std::vector<EditTarget> hits = engine_.HitPreviewAll(x, y);
+	const EditTarget cur = engine_.Selection();
+	EditTarget t;
+	if (cur.Valid() && std::find(hits.begin(), hits.end(), cur) != hits.end()) {
+		t = cur;
+		cycleOnRelease_ = hits.size() > 1;
+	} else if (!hits.empty()) {
+		t = hits.front();
+	}
 	engine_.SetSelection(t);
 	// 填滿整個畫面的圖層只選取、不拖動，避免不小心把主畫面拖歪；要縮小請拖角落
 	drag_ = (t.Valid() && !engine_.IsLocked(t)) ? t : EditTarget();
+	if (onSelectionChanged)
+		onSelectionChanged();
 }
 
 void Display::mouseMoveEvent(QMouseEvent *event)
@@ -184,9 +241,24 @@ void Display::mouseReleaseEvent(QMouseEvent *)
 {
 	if (drag_.Valid() && dragged_ && onOverlayChanged)
 		onOverlayChanged();
+	if (cycleOnRelease_ && !dragged_) {
+		// 同一點再點一次：選下一層（到最底層後回到最上層）
+		const std::vector<EditTarget> hits = engine_.HitPreviewAll(pressX_, pressY_);
+		const EditTarget cur = engine_.Selection();
+		auto it = std::find(hits.begin(), hits.end(), cur);
+		if (it != hits.end() && hits.size() > 1) {
+			++it;
+			engine_.SetSelection(it == hits.end() ? hits.front() : *it);
+			if (onSelectionChanged)
+				onSelectionChanged();
+		}
+	}
+	cycleOnRelease_ = false;
 	drag_ = EditTarget();
 	dragCorner_ = -1;
 	dragged_ = false;
+	std::lock_guard<std::mutex> lock(viewMutex_);
+	viewFrozen_ = false;
 }
 
 void Display::wheelEvent(QWheelEvent *event)
@@ -256,16 +328,14 @@ void Display::Draw(void *param, uint32_t cx, uint32_t cy)
 	if (!obs_get_video_info(&ovi) || !ovi.base_width || !ovi.base_height)
 		return;
 
-	const float scale = std::min((float)cx / (float)ovi.base_width, (float)cy / (float)ovi.base_height);
-	const int w = (int)(ovi.base_width * scale);
-	const int h = (int)(ovi.base_height * scale);
-	const int x = ((int)cx - w) / 2;
-	const int y = ((int)cy - h) / 2;
+	// 顯示範圍平常就是 1920×1080 畫面；選到畫面外的圖層時會自動放大範圍
+	float scale, left, top;
+	self->Mapping((float)cx, (float)cy, scale, left, top);
 
 	gs_viewport_push();
 	gs_projection_push();
-	gs_ortho(0.0f, (float)ovi.base_width, 0.0f, (float)ovi.base_height, -100.0f, 100.0f);
-	gs_set_viewport(x, y, w, h);
+	gs_ortho(left, left + (float)cx / scale, top, top + (float)cy / scale, -100.0f, 100.0f);
+	gs_set_viewport(0, 0, (int)cx, (int)cy);
 	if (self->mode_ == Mode::Program)
 		obs_render_main_texture();
 	else
